@@ -1,0 +1,26 @@
+.DS_Store
+
+# SwiftPM / local build outputs
+.build/
+.build-cache/
+.swiftpm/
+
+# Xcode user-specific state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Derived data and local previews
+DerivedData/
+
+# Local databases or temporary exports if created in-workspace
+*.store
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Generated app bundles or archives
+*.app
+*.dSYM
+*.xcarchive
