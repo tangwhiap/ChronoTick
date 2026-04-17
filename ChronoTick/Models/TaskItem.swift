@@ -7,8 +7,16 @@ import SwiftUI
 final class TaskItem {
     @Attribute(.unique) var id: UUID
     var title: String
+    /// `date` is the owning daily-checklist date.
+    ///
+    /// This value answers "which daily checklist does the task belong to?" and must stay stable
+    /// after creation unless the app explicitly supports reassigning checklist ownership.
+    /// It is intentionally distinct from `startDateTime` / `endDateTime`, which describe when the
+    /// task actually happens in the calendar timeline.
     var date: Date
+    /// Actual start date/time used by the week view and notification scheduling.
     var startDateTime: Date?
+    /// Actual end date/time used by timeline rendering for ranged tasks.
     var endDateTime: Date?
     var hasTime: Bool
     var isCompleted: Bool
@@ -80,6 +88,14 @@ extension TaskItem {
 
     var notificationIdentifier: String {
         "task-\(id.uuidString)"
+    }
+
+    var owningDate: Date {
+        Calendar.current.startOfDay(for: date)
+    }
+
+    var actualDisplayDate: Date {
+        startDateTime ?? owningDate
     }
 
     func touch() {

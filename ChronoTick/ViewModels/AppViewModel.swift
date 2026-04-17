@@ -237,10 +237,11 @@ enum TaskMutationCoordinator {
         modelContext: ModelContext
     ) async throws -> TaskItem {
         let previousOwningDate = editingTask?.date
-        let task = editingTask ?? TaskItem(title: draft.title, date: draft.date)
+        let task = editingTask ?? TaskItem(title: draft.title, date: draft.owningDate)
+        let owningDate = editingTask?.owningDate ?? draft.owningDate
 
         task.title = draft.title
-        task.date = Calendar.current.startOfDay(for: draft.date)
+        task.date = owningDate
         task.hasTime = draft.hasTime
         task.startDateTime = draft.startDateTime
         task.endDateTime = draft.endDateTime
@@ -296,13 +297,11 @@ enum TaskMutationCoordinator {
         snapMinutes: Int,
         modelContext: ModelContext
     ) async {
-        let previousOwningDate = task.date
         let day = date.startOfDay()
-        task.date = day
-        applyTimelineTime(for: task, on: day, startMinute: startMinute, snapMinutes: snapMinutes)
+        applyTimelineTime(for: task, onActualDay: day, startMinute: startMinute, snapMinutes: snapMinutes)
         task.touch()
         try? modelContext.save()
-        synchronizeDailyCompletionHabit(for: [previousOwningDate, day], in: modelContext)
+        synchronizeDailyCompletionHabit(for: [task.date], in: modelContext)
         await NotificationScheduler.shared.ensureNotificationState(for: task, in: modelContext)
     }
 
@@ -319,16 +318,18 @@ enum TaskMutationCoordinator {
         else { return }
 
         let startMinutes = minuteOfDay(for: start)
-        let endMinutes = minuteOfDay(for: end)
+        let startDay = Calendar.current.startOfDay(for: start)
+        let endDay = Calendar.current.startOfDay(for: end)
 
         switch edge {
         case .top:
-            let clamped = min(max(0, snap(targetMinute, to: snapMinutes)), endMinutes - snapMinutes)
-            task.startDateTime = task.date.setting(hour: clamped / 60, minute: clamped % 60)
+            let maxAllowed = min((24 * 60) - snapMinutes, Int(end.timeIntervalSince(startDay) / 60) - snapMinutes)
+            let clamped = min(max(0, snap(targetMinute, to: snapMinutes)), maxAllowed)
+            task.startDateTime = startDay.setting(hour: clamped / 60, minute: clamped % 60)
         case .bottom:
-            let clamped = max(startMinutes + snapMinutes, min(24 * 60, snap(targetMinute, to: snapMinutes)))
-            let visibleEnd = min(clamped, 23 * 60 + 59)
-            task.endDateTime = task.date.setting(hour: visibleEnd / 60, minute: visibleEnd % 60)
+            let minimum = Calendar.current.isDate(start, inSameDayAs: endDay) ? startMinutes + snapMinutes : 0
+            let clamped = max(minimum, min((23 * 60) + 59, snap(targetMinute, to: snapMinutes)))
+            task.endDateTime = endDay.setting(hour: clamped / 60, minute: clamped % 60)
         }
 
         task.touch()
@@ -410,22 +411,22 @@ enum TaskMutationCoordinator {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func applyTimelineTime(for task: TaskItem, on date: Date, startMinute: Int, snapMinutes: Int) {
+    /// Timeline dragging edits the actual scheduled time while keeping checklist ownership stable.
+    /// That lets a task stay in the same daily checklist even when the user moves it into the next
+    /// or previous day in the week timeline.
+    private static func applyTimelineTime(for task: TaskItem, onActualDay date: Date, startMinute: Int, snapMinutes: Int) {
         let clampedStart = max(0, min(24 * 60 - snapMinutes, snap(startMinute, to: snapMinutes)))
+        guard let actualStart = date.setting(hour: clampedStart / 60, minute: clampedStart % 60) else { return }
 
         switch task.timingKind {
         case .point:
-            task.startDateTime = date.setting(hour: clampedStart / 60, minute: clampedStart % 60)
+            task.startDateTime = actualStart
             task.endDateTime = nil
         case .range:
             guard let start = task.startDateTime, let end = task.endDateTime else { return }
-            let duration = max(snapMinutes, minuteOfDay(for: end) - minuteOfDay(for: start))
-            let maxStart = max(0, 24 * 60 - duration)
-            let finalStart = min(clampedStart, maxStart)
-            let finalEnd = finalStart + duration
-            task.startDateTime = date.setting(hour: finalStart / 60, minute: finalStart % 60)
-            let cappedEnd = min(finalEnd, 23 * 60 + 59)
-            task.endDateTime = date.setting(hour: cappedEnd / 60, minute: cappedEnd % 60)
+            let duration = max(TimeInterval(snapMinutes * 60), end.timeIntervalSince(start))
+            task.startDateTime = actualStart
+            task.endDateTime = actualStart.addingTimeInterval(duration)
         case .untimed:
             task.startDateTime = nil
             task.endDateTime = nil
@@ -452,11 +453,13 @@ enum ResizeEdge {
 struct TaskDraft: Identifiable {
     let id = UUID()
     var title: String
-    var date: Date
+    var owningDate: Date
+    var actualDate: Date
     var hasTime: Bool
     var startTime: Date
     var endTime: Date
     var useEndTime: Bool
+    var endDayOffsetFromStart: Int
     var reminderEnabled: Bool
     var reminderOffsetMinutes: Int
     var notes: String
@@ -466,11 +469,13 @@ struct TaskDraft: Identifiable {
     init(date: Date) {
         let base = Calendar.current.startOfDay(for: date)
         self.title = ""
-        self.date = base
+        self.owningDate = base
+        self.actualDate = base
         self.hasTime = false
         self.startTime = base.setting(hour: 9, minute: 0) ?? base
         self.endTime = base.setting(hour: 10, minute: 0) ?? base
         self.useEndTime = false
+        self.endDayOffsetFromStart = 0
         self.reminderEnabled = false
         self.reminderOffsetMinutes = 0
         self.notes = ""
@@ -478,13 +483,19 @@ struct TaskDraft: Identifiable {
     }
 
     init(task: TaskItem) {
-        let base = Calendar.current.startOfDay(for: task.date)
+        let base = Calendar.current.startOfDay(for: task.actualDisplayDate)
         self.title = task.title
-        self.date = task.date
+        self.owningDate = task.owningDate
+        self.actualDate = base
         self.hasTime = task.hasTime
         self.startTime = task.startDateTime ?? (base.setting(hour: 9, minute: 0) ?? base)
         self.endTime = task.endDateTime ?? (base.setting(hour: 10, minute: 0) ?? base)
         self.useEndTime = task.endDateTime != nil
+        if let start = task.startDateTime, let end = task.endDateTime {
+            self.endDayOffsetFromStart = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: start), to: Calendar.current.startOfDay(for: end)).day ?? 0
+        } else {
+            self.endDayOffsetFromStart = 0
+        }
         self.reminderEnabled = task.reminderEnabled
         self.reminderOffsetMinutes = task.reminderOffsetMinutes
         self.notes = task.notes ?? ""
@@ -496,19 +507,21 @@ struct TaskDraft: Identifiable {
     func validated() -> ValidatedTaskDraft? {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return nil }
-        let day = Calendar.current.startOfDay(for: date)
+        let owningDay = Calendar.current.startOfDay(for: owningDate)
+        let actualDay = Calendar.current.startOfDay(for: actualDate)
         if hasTime {
             let startComponents = Calendar.current.dateComponents([.hour, .minute], from: startTime)
-            guard let start = day.setting(hour: startComponents.hour ?? 0, minute: startComponents.minute ?? 0) else { return nil }
+            guard let start = actualDay.setting(hour: startComponents.hour ?? 0, minute: startComponents.minute ?? 0) else { return nil }
             var end: Date?
             if useEndTime {
                 let endComponents = Calendar.current.dateComponents([.hour, .minute], from: endTime)
-                end = day.setting(hour: endComponents.hour ?? 0, minute: endComponents.minute ?? 0)
+                let endBaseDay = Calendar.current.date(byAdding: .day, value: endDayOffsetFromStart, to: actualDay) ?? actualDay
+                end = endBaseDay.setting(hour: endComponents.hour ?? 0, minute: endComponents.minute ?? 0)
                 if let end, end < start { return nil }
             }
             return ValidatedTaskDraft(
                 title: trimmedTitle,
-                date: day,
+                owningDate: owningDay,
                 hasTime: true,
                 startDateTime: start,
                 endDateTime: end,
@@ -520,7 +533,7 @@ struct TaskDraft: Identifiable {
         } else {
             return ValidatedTaskDraft(
                 title: trimmedTitle,
-                date: day,
+                owningDate: owningDay,
                 hasTime: false,
                 startDateTime: nil,
                 endDateTime: nil,
@@ -537,7 +550,7 @@ struct TaskDraft: Identifiable {
 /// Once the app reaches this type, the view model can save it without needing to inspect UI flags.
 struct ValidatedTaskDraft {
     let title: String
-    let date: Date
+    let owningDate: Date
     let hasTime: Bool
     let startDateTime: Date?
     let endDateTime: Date?

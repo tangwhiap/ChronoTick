@@ -61,6 +61,16 @@ final class TaskTimeTextParserTests: XCTestCase {
         XCTAssertEqual(DateFormatter.numericMonthDayYear.string(from: parsed.endDateTime!), "04/16/26")
     }
 
+    func testNegativePointInputUsesPreviousDayActualTime() throws {
+        let calendar = Calendar.chronoTick
+        let baseDate = calendar.date(from: DateComponents(year: 2026, month: 4, day: 17))!
+        let parsed = try TaskTimeTextParser.parse("-03:00 early prep", on: baseDate, calendar: calendar)
+
+        XCTAssertEqual(parsed.title, "early prep")
+        XCTAssertEqual(DateFormatter.displayTime.string(from: parsed.startDateTime!), "21:00")
+        XCTAssertEqual(DateFormatter.numericMonthDayYear.string(from: parsed.startDateTime!), "04/16/26")
+    }
+
     func testUntimedInput() throws {
         let date = Calendar.current.startOfDay(for: .now)
         let parsed = try TaskTimeTextParser.parse("Complete things", on: date)

@@ -1,127 +1,220 @@
 # ChronoTick
 
-ChronoTick 是一个面向 macOS 14+ 的本地优先时间管理应用，使用 SwiftUI + SwiftData 构建，聚焦周视图时间轴、自然文本建任务、本地提醒、CSV 导入导出与 Habit 打卡。
+ChronoTick is a local-first macOS time management app built with SwiftUI and SwiftData.
+It focuses on a usable weekly timeline, fast natural-text task entry, checklist workflows,
+habit tracking, local notifications, CSV import/export, menu bar access, and theme/background customization.
 
-## 如何运行
+The current app target is macOS 14+.
 
-1. 在 macOS 14+ 上安装 Xcode 15 或更高版本。
-2. 打开项目目录中的 `Package.swift` 或 `ChronoTick.xcodeproj`。
-3. 运行 `ChronoTick` 目标。
-4. 首次启用提醒时允许通知权限。
+## Highlights
 
-如果你只装了 Command Line Tools，也可以在终端执行：
+- Weekly timeline with draggable timed tasks
+- Daily checklist view with incomplete/completed sections
+- Project-style task lists with optional deadlines
+- Natural text parsing for quick task creation
+- Local notification rules for daily checklist tasks
+- Built-in habit: `完成每日任务`
+- CSV import/export for tasks and habit check-ins
+- Menu bar quick panel
+- Theme color and background image customization
+
+## Run Locally
+
+### Xcode
+
+1. Open `/Users/wenhant2/software/ChronoTick/ChronoTick.xcodeproj`
+2. Select the `ChronoTick` scheme
+3. Build and run on macOS
+
+### Swift Package Manager
+
+The repository also includes `Package.swift` for lightweight source/test access:
 
 ```bash
 swift build
 swift test
 ```
 
-## 技术架构
+Note: the main production app flow is maintained through the Xcode project.
+
+## Project Structure
+
+- `ChronoTick/Models`
+  SwiftData models for checklist tasks, project tasks, habits, reminder rules, and theme settings.
+- `ChronoTick/ViewModels`
+  Shared app navigation state and mutation coordination.
+- `ChronoTick/Views`
+  SwiftUI screens and reusable components.
+- `ChronoTick/Services`
+  Notifications, CSV processing, habit synchronization, seed/setup helpers.
+- `ChronoTick/Utilities`
+  Date helpers, parser logic, reminder-rule parsing, CSV document helpers.
+- `ChronoTickTests`
+  Unit tests for parser, CSV behavior, reminder matching, and checklist ownership draft logic.
+- `Samples`
+  Example CSV files for import/export testing.
+
+## Architecture
 
 - UI: SwiftUI
-- 本地存储: SwiftData
-- 架构: MVVM
-- 通知: UserNotifications
-- 数据交换: CSV（ISO 8601 日期时间）
+- Persistence: SwiftData
+- Pattern: MVVM with a centralized task mutation coordinator
+- Notifications: `UserNotifications`
+- Import/Export: CSV using ISO 8601 date-time strings
 
-主要分层：
+### Why the mutation coordinator exists
 
-- `Models/`: SwiftData 实体
-- `ViewModels/`: 页面共享状态与任务编辑逻辑
-- `Views/`: 周视图、日列表、打卡、设置、菜单栏等界面
-- `Services/`: 提醒、CSV、Habit 统计、种子数据
-- `Utilities/`: 时间文本解析、日期工具、CSV 文档
+ChronoTick now routes task mutations through one coordinator so that:
 
-## 数据模型说明
+- persistence
+- notification rescheduling
+- checklist completion side effects
+- built-in habit synchronization
 
-### TaskItem
+stay consistent no matter whether a task is changed from quick add, the editor sheet,
+the day list, or the weekly timeline.
 
-- `id: UUID`
-- `title: String`
-- `date: Date`
-- `startDateTime: Date?`
-- `endDateTime: Date?`
-- `hasTime: Bool`
-- `isCompleted: Bool`
-- `reminderEnabled: Bool`
-- `reminderOffsetMinutes: Int`
-- `notes: String?`
-- `createdAt: Date`
-- `updatedAt: Date`
+## Data Semantics
 
-### Habit
+### Daily Checklist Tasks (`TaskItem`)
 
-- `id: UUID`
-- `name: String`
-- `colorHex: String?`
-- `createdAt: Date`
-- `updatedAt: Date`
+ChronoTick distinguishes between:
 
-### HabitCheckIn
+- **Owning checklist date**: `TaskItem.date`
+- **Actual scheduled datetime**: `TaskItem.startDateTime` / `TaskItem.endDateTime`
 
-- `id: UUID`
-- `habit: Habit?`
-- `date: Date`
-- `isCheckedIn: Bool`
+This matters for inputs like `25:30` or `-03:00`.
 
-## 时间解析规则说明
+Example:
 
-支持以下格式：
+- You create a task inside the `04/17/26` daily checklist
+- Input: `25:30 Complete things`
+- The task still belongs to the `04/17/26` checklist
+- But its actual scheduled time is `04/18/26 01:30`
+- The weekly timeline and reminders use the actual scheduled time
+- Daily checklist completion and the built-in completion habit use the owning checklist date
+
+This ownership model is intentional and should remain stable unless the app explicitly adds
+"move to another checklist" as a separate feature.
+
+### Project Tasks
+
+Project tasks belong to named project lists instead of daily checklists.
+
+- They may have an optional deadline
+- A deadline may be date-only or date+time
+- Date-only deadlines render at a default visual time in the week view, but they do not gain a real time component in storage
+
+## Natural Text Parsing
+
+Supported examples:
 
 - `23:30 ~ 23:50 read book`
 - `23:30~23:50 read book`
 - `09:00-10:30 Review paper`
 - `9:00 Review paper`
 - `18:30 dinner`
+- `25:30 late work`
+- `-03:00 early prep`
 - `Complete things`
 
-规则：
+Supported punctuation:
 
-- 识别到开始和结束时间时，创建时间段任务
-- 只识别到一个时间时，创建单时间点任务
-- 未识别到时间时，创建无时间任务
-- 结束时间早于开始时间时，给出中文错误提示
+- English and Chinese colon variants
+- English and Chinese range separators
+- Arbitrary spaces around separators
 
-## CSV 格式说明
+Parsing rules:
 
-### 任务导出字段
+- `start + end + title` -> ranged task
+- `time + title` -> point task
+- no time -> untimed task
+- invalid ranges still show a friendly Chinese error
+
+## Notifications
+
+ChronoTick supports two reminder systems:
+
+### 1. Per-task reminders
+
+Daily checklist tasks can enable their own reminder.
+When enabled, that task uses its explicit reminder setting and does **not** stack unified rule reminders.
+
+### 2. Unified reminder rules
+
+In Settings, daily checklist reminder rules can match task titles via regular expression and expand to multiple reminder moments.
+
+Examples:
+
+- `-1d`
+- `-3m`
+- `-30s`
+- `0m`
+- `30s`
+- `1.5m`
+
+Project task reminder preferences are configured globally for date-only deadlines.
+
+## CSV Import / Export
+
+### Task CSV columns
 
 `id,date,title,start_datetime,end_datetime,has_time,is_completed,reminder_enabled,reminder_offset_minutes,notes,created_at,updated_at`
 
-### 打卡导出字段
+### Habit CSV columns
 
 `id,name,date,is_checked_in`
 
-导入支持两种模式：
+### Import modes
 
-- 合并导入：按 `id` 或 `(date + title + 时间)` 近似去重
-- 覆盖导入：先清空当前数据，再导入 CSV
+- **Merge import**
+  Keeps existing data and merges imported content with de-duplication.
+- **Replace import**
+  Replaces the current dataset after explicit confirmation.
 
-示例文件见 [Samples/tasks_sample.csv](/Users/wenhant2/software/ChronoTick/Samples/tasks_sample.csv) 和 [Samples/habits_sample.csv](/Users/wenhant2/software/ChronoTick/Samples/habits_sample.csv)。
+Example files:
 
-## 已知限制
+- `/Users/wenhant2/software/ChronoTick/Samples/tasks_sample.csv`
+- `/Users/wenhant2/software/ChronoTick/Samples/habits_sample.csv`
 
-- 时间轴拖拽目前为单任务直接吸附移动，尚未处理复杂重叠布局
-- 单时间点任务支持拖动，不支持单独拉伸结束时间
-- 菜单栏快速打开主应用当前使用激活现有应用窗口
-- 第一版不包含重复任务、云同步、账号系统和多端协同
+## Theme Settings
 
-## 后续扩展建议
+ChronoTick supports:
 
-### 重复任务
+- Theme Color 1: accent / control emphasis color
+- Theme Color 2: sidebar base surface color
+- Optional background image
 
-- 为 `TaskItem` 增加 `RecurrenceRule` 实体或规则值对象
-- 实例化未来 occurrences 时保持源任务与实例任务的映射关系
-- 提前考虑“只改本次 / 改全部 / 改未来”的分叉策略
+Background image and theme colors are intentionally independent:
 
-### iCloud 同步
+- background image = visual page background
+- theme colors = foreground/surface accents
 
-- 持久层抽象出 repository 接口
-- 在 SwiftData/Core Data 之上增加 CloudKit 同步层
-- 冲突解决优先使用基于 `updatedAt` 的 last-write-wins，再逐步增强
+## Known Limitations
 
-### 多端同步
+- The Xcode scheme currently is not configured for `xcodebuild test` action, even though unit test files are present in the repository.
+- Complex overlapping weekly timeline cards can still be refined further.
+- Daily checklist editor currently exposes actual scheduled date/time, while checklist ownership remains fixed after creation.
+- No cloud sync, account system, repeated tasks, or multi-device sync in V1.
 
-- 将任务与 habit 的变更记录化，设计可合并的 operation log
-- 统一使用稳定 UUID、时区无关的 ISO 8601 与变更版本号
-- 为通知、菜单栏和各平台视图层保留独立适配层
+## Recommended Future Extensions
+
+### Repeating Tasks
+
+- Add a dedicated recurrence model instead of overloading `TaskItem`
+- Separate source task rules from generated occurrences
+
+### iCloud / Cloud Sync
+
+- Introduce repository abstractions above SwiftData
+- Add a sync layer separately from the local mutation coordinator
+
+### Multi-device Sync
+
+- Preserve stable UUIDs
+- Track change versions and conflict resolution strategy
+- Keep notification scheduling device-local
+
+## License
+
+MIT. See `/Users/wenhant2/software/ChronoTick/LICENSE`.

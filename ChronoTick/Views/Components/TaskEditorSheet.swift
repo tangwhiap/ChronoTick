@@ -15,7 +15,14 @@ struct TaskEditorSheet: View {
                 Text(viewModel.editingTask == nil ? "新建任务" : "编辑任务")
                     .font(.title2.bold())
                 TextField("标题", text: draft.title)
-                DatePicker("日期", selection: draft.date, displayedComponents: .date)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("所属清单")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(draft.wrappedValue.owningDate.formatted(date: .numeric, time: .omitted))
+                        .font(.body.weight(.medium))
+                }
+                DatePicker("实际日期", selection: draft.actualDate, displayedComponents: .date)
                 Toggle("有具体时间", isOn: draft.hasTime)
                 if draft.wrappedValue.hasTime {
                     DatePicker("开始时间", selection: draft.startTime, displayedComponents: .hourAndMinute)

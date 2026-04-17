@@ -33,6 +33,7 @@
 			A00000000000000000000017 /* HabitStatsCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000037 /* HabitStatsCalculatorTests.swift */; };
 			A00000000000000000000018 /* ChronoTick.icns in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003A /* ChronoTick.icns */; };
 			A0000000000000000000001D /* ReminderSettingsServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000067 /* ReminderSettingsServiceTests.swift */; };
+			A00000000000000000000068 /* TaskDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000069 /* TaskDraftTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -66,8 +67,9 @@
 				A0000000000000000000003C /* HabitDashboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitDashboardViewModel.swift; sourceTree = "<group>"; };
 				A0000000000000000000003D /* SystemHabitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemHabitService.swift; sourceTree = "<group>"; };
 				A0000000000000000000003E /* ReminderRuleParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderRuleParser.swift; sourceTree = "<group>"; };
-				A0000000000000000000003F /* ReminderSettingsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSettingsService.swift; sourceTree = "<group>"; };
+			A0000000000000000000003F /* ReminderSettingsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSettingsService.swift; sourceTree = "<group>"; };
 			A00000000000000000000067 /* ReminderSettingsServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSettingsServiceTests.swift; sourceTree = "<group>"; };
+			A00000000000000000000069 /* TaskDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDraftTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +120,7 @@
 					A00000000000000000000036,
 					A00000000000000000000037,
 					A00000000000000000000067,
+					A00000000000000000000069,
 				);
 			path = ChronoTickTests;
 			sourceTree = "<group>";
@@ -294,10 +297,11 @@
 			buildActionMask = 2147483647;
 			files = (
 					A00000000000000000000015,
-					A00000000000000000000016,
-					A00000000000000000000017,
-					A0000000000000000000001D,
-				);
+						A00000000000000000000016,
+						A00000000000000000000017,
+						A0000000000000000000001D,
+						A00000000000000000000068,
+					);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */

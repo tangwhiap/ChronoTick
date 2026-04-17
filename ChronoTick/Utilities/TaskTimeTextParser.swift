@@ -25,8 +25,9 @@ enum TaskTimeTextParserError: LocalizedError, Equatable {
 }
 
 enum TaskTimeTextParser {
-    private static let rangePattern = try! NSRegularExpression(pattern: #"^\s*(\d{1,2}:\d{2})\s*(?:~|-)\s*(\d{1,2}:\d{2})\s+(.+?)\s*$"#)
-    private static let pointPattern = try! NSRegularExpression(pattern: #"^\s*(\d{1,2}:\d{2})\s+(.+?)\s*$"#)
+    private static let timeToken = #"([+-]?\d{1,2}:\d{2})"#
+    private static let rangePattern = try! NSRegularExpression(pattern: #"^\s*\#(timeToken)\s*(?:~|-)\s*\#(timeToken)\s+(.+?)\s*$"#)
+    private static let pointPattern = try! NSRegularExpression(pattern: #"^\s*\#(timeToken)\s+(.+?)\s*$"#)
 
     static func parse(_ rawText: String, on date: Date, calendar: Calendar = .chronoTick) throws -> ParsedTaskInput {
         let text = normalizedInput(rawText).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -71,12 +72,10 @@ enum TaskTimeTextParser {
         guard components.count == 2 else { return nil }
         let hour = components[0]
         let minute = components[1]
-        guard (0...47).contains(hour), (0...59).contains(minute) else { return nil }
+        guard (-47...47).contains(hour), (0...59).contains(minute) else { return nil }
 
-        let dayOffset = hour / 24
-        let normalizedHour = hour % 24
-        let targetDay = calendar.date(byAdding: .day, value: dayOffset, to: calendar.startOfDay(for: baseDate)) ?? baseDate
-        return targetDay.setting(hour: normalizedHour, minute: minute, calendar: calendar)
+        let totalMinutes = (hour * 60) + (hour >= 0 ? minute : -minute)
+        return calendar.date(byAdding: .minute, value: totalMinutes, to: calendar.startOfDay(for: baseDate))
     }
 
     private static func normalizedInput(_ text: String) -> String {
