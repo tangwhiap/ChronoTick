@@ -7,9 +7,9 @@ struct WeekTimelineView: View {
     @Query(sort: [SortDescriptor(\TaskItem.date), SortDescriptor(\TaskItem.startDateTime), SortDescriptor(\TaskItem.createdAt)]) private var tasks: [TaskItem]
     @Query(sort: [SortDescriptor(\ProjectTask.deadlineDate), SortDescriptor(\ProjectTask.createdAt)]) private var projectTasks: [ProjectTask]
 
-    private let hourHeight: CGFloat = 72
-    private let untimedAreaHeight: CGFloat = 70
-    private let columnWidth: CGFloat = 180
+    private var metrics: WeekTimelineLayoutMetrics {
+        viewModel.weekTimelineLayoutMetrics
+    }
 
     private var weekDates: [Date] {
         let calendar = Calendar.current
@@ -24,19 +24,12 @@ struct WeekTimelineView: View {
         ScrollView([.horizontal, .vertical]) {
             HStack(alignment: .top, spacing: 0) {
                 timeAxis
-                ForEach(Array(weekDates.enumerated()), id: \.offset) { index, date in
-                    DayTimelineColumn(
-                        date: date,
-                        dayIndex: index,
-                        weekDates: weekDates,
-                        untimedTasks: untimedTasksForDate(date),
-                        timelineSegments: timelineSegmentsForDate(date),
-                        projectDeadlineMarkers: projectDeadlineMarkersForDate(date),
-                        columnWidth: columnWidth,
-                        hourHeight: hourHeight,
-                        untimedAreaHeight: untimedAreaHeight
-                    )
-                }
+                WeekTimelineStrip(
+                    weekDates: weekDates,
+                    metrics: metrics,
+                    tasks: tasks,
+                    projectTasks: projectTasks
+                )
             }
             .padding(.bottom, 40)
         }
@@ -45,14 +38,38 @@ struct WeekTimelineView: View {
 
     private var timeAxis: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(width: 64, height: untimedAreaHeight + 28)
+            Color.clear.frame(width: metrics.timeAxisWidth, height: metrics.untimedAreaHeight + metrics.headerHeight)
             ForEach(0..<24, id: \.self) { hour in
                 Text(String(format: "%02d:00", hour))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(width: 64, height: hourHeight, alignment: .topTrailing)
+                    .frame(width: metrics.timeAxisWidth, height: metrics.hourHeight, alignment: .topTrailing)
                     .padding(.trailing, 8)
             }
+        }
+    }
+}
+
+/// A single week strip keeps the timeline logic grouped by week while preserving the stable
+/// interaction model that shipped before experimental infinite scrolling was introduced.
+private struct WeekTimelineStrip: View {
+    let weekDates: [Date]
+    let metrics: WeekTimelineLayoutMetrics
+    let tasks: [TaskItem]
+    let projectTasks: [ProjectTask]
+
+    var body: some View {
+        ForEach(Array(weekDates.enumerated()), id: \.offset) { index, date in
+            DayTimelineColumn(
+                date: date,
+                dayIndex: index,
+                weekDates: weekDates,
+                untimedTasks: untimedTasksForDate(date),
+                timelineSegments: timelineSegmentsForDate(date),
+                projectDeadlineMarkers: projectDeadlineMarkersForDate(date),
+                metrics: metrics,
+                dayIdentifier: "day-\(Int(date.startOfDay().timeIntervalSinceReferenceDate))"
+            )
         }
     }
 
@@ -107,8 +124,8 @@ struct WeekTimelineView: View {
 
         return ProjectDeadlineCluster.makeClusters(
             from: sortedMarkers,
-            columnWidth: columnWidth,
-            hourHeight: hourHeight
+            columnWidth: metrics.columnWidth,
+            hourHeight: metrics.hourHeight
         )
     }
 }
@@ -123,9 +140,8 @@ private struct DayTimelineColumn: View {
     let untimedTasks: [TaskItem]
     let timelineSegments: [TimelineTaskSegment]
     let projectDeadlineMarkers: [ProjectDeadlineCluster]
-    let columnWidth: CGFloat
-    let hourHeight: CGFloat
-    let untimedAreaHeight: CGFloat
+    let metrics: WeekTimelineLayoutMetrics
+    let dayIdentifier: String
 
     var body: some View {
         VStack(spacing: 0) {
@@ -134,19 +150,20 @@ private struct DayTimelineColumn: View {
             ZStack(alignment: .topLeading) {
                 timelineGrid
                 if date.isTodayInCurrentCalendar {
-                    CurrentTimeIndicator(hourHeight: hourHeight)
+                    CurrentTimeIndicator(hourHeight: metrics.hourHeight)
                 }
                 ForEach(projectDeadlineMarkers) { cluster in
-                    ProjectDeadlineClusterView(cluster: cluster, columnWidth: columnWidth, hourHeight: hourHeight)
+                    ProjectDeadlineClusterView(cluster: cluster, columnWidth: metrics.columnWidth, hourHeight: metrics.hourHeight)
                 }
                 ForEach(timelineSegments) { segment in
-                    TaskTimelineCard(segment: segment, dayIndex: dayIndex, weekDates: weekDates, columnWidth: columnWidth, hourHeight: hourHeight)
+                    TaskTimelineCard(segment: segment, dayIndex: dayIndex, weekDates: weekDates, columnWidth: metrics.columnWidth, hourHeight: metrics.hourHeight)
                 }
             }
-            .frame(width: columnWidth, height: hourHeight * 24)
+            .frame(width: metrics.columnWidth, height: metrics.hourHeight * 24)
         }
         .background(viewModel.selectedDate.startOfDay() == date.startOfDay() ? Color.accentColor.opacity(0.06) : Color.clear)
         .overlay(Rectangle().fill(Color.secondary.opacity(0.15)).frame(width: 1), alignment: .trailing)
+        .id(dayIdentifier)
     }
 
     private var header: some View {
@@ -161,7 +178,7 @@ private struct DayTimelineColumn: View {
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
             }
         }
-        .frame(width: columnWidth, height: 28)
+        .frame(width: metrics.columnWidth, height: metrics.headerHeight)
     }
 
     private var untimedArea: some View {
@@ -169,12 +186,12 @@ private struct DayTimelineColumn: View {
             Text("无时间任务")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if untimedTasks.filter({ !$0.isCompleted }).isEmpty {
+            if untimedTasks.isEmpty {
                 Text("拖入或新建")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             } else {
-                ForEach(untimedTasks.filter { !$0.isCompleted }.prefix(3)) { task in
+                ForEach(untimedTasks.prefix(3)) { task in
                     Button {
                         viewModel.openEdit(task: task)
                     } label: {
@@ -187,7 +204,11 @@ private struct DayTimelineColumn: View {
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+                        .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(task.isCompleted ? Color.gray.opacity(0.14) : Color.orange.opacity(0.12))
+                        )
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -202,7 +223,7 @@ private struct DayTimelineColumn: View {
             Spacer(minLength: 0)
         }
         .padding(8)
-        .frame(width: columnWidth, height: untimedAreaHeight, alignment: .topLeading)
+        .frame(width: metrics.columnWidth, height: metrics.untimedAreaHeight, alignment: .topLeading)
         .background(Color.orange.opacity(0.06))
     }
 
@@ -215,7 +236,7 @@ private struct DayTimelineColumn: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             }
         }
-        .frame(width: columnWidth, height: hourHeight * 24)
+        .frame(width: metrics.columnWidth, height: metrics.hourHeight * 24)
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.secondary.opacity(0.12)).frame(width: 1)
         }

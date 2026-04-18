@@ -14,6 +14,7 @@ struct ChronoTickApp: App {
             DailyTaskReminderRule.self,
             ProjectTaskReminderPreferences.self,
             AppThemeSettings.self,
+            SavedThemePreset.self,
             Habit.self,
             HabitCheckIn.self
         ])
@@ -39,6 +40,9 @@ struct ChronoTickApp: App {
                 .modelContainer(container)
         }
         .defaultSize(width: 1340, height: 860)
+        .commands {
+            WeekTimelineZoomCommands(viewModel: viewModel)
+        }
 
         MenuBarExtra("ChronoTick", systemImage: "clock.badge.checkmark") {
             MenuBarPanelView()
@@ -93,6 +97,34 @@ private extension ChronoTickApp {
 
         if removedAny {
             try? context.save()
+        }
+    }
+}
+
+/// These commands mirror the familiar macOS zoom shortcuts so the week timeline can be resized
+/// quickly when the user moves between monitors with very different pixel densities.
+private struct WeekTimelineZoomCommands: Commands {
+    @ObservedObject var viewModel: AppViewModel
+
+    var body: some Commands {
+        CommandMenu("视图") {
+            Button("放大周视图") {
+                viewModel.zoomInWeekTimeline()
+            }
+            .keyboardShortcut("+", modifiers: .command)
+            .disabled(!viewModel.canZoomInWeekTimeline)
+
+            Button("缩小周视图") {
+                viewModel.zoomOutWeekTimeline()
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(!viewModel.canZoomOutWeekTimeline)
+
+            Button("恢复标准大小") {
+                viewModel.resetWeekTimelineZoom()
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            .disabled(viewModel.weekTimelineZoomLevel == .standard)
         }
     }
 }

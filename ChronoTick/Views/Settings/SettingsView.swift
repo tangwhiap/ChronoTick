@@ -28,6 +28,7 @@ struct SettingsView: View {
     @Query(sort: [SortDescriptor(\DailyTaskReminderRule.createdAt)]) private var dailyReminderRules: [DailyTaskReminderRule]
     @Query(sort: [SortDescriptor(\ProjectTaskReminderPreferences.createdAt)]) private var projectReminderPreferences: [ProjectTaskReminderPreferences]
     @Query(sort: [SortDescriptor(\AppThemeSettings.createdAt)]) private var themeSettings: [AppThemeSettings]
+    @Query(sort: [SortDescriptor(\SavedThemePreset.createdAt)]) private var savedThemes: [SavedThemePreset]
 
     @State private var pendingReplaceImportKind: SettingsImportKind?
     @State private var importMode: CSVImportMode = .merge
@@ -35,9 +36,11 @@ struct SettingsView: View {
     @State private var isPresentingAddDailyRule = false
     @State private var editingDailyRule: DailyTaskReminderRule?
     @State private var pendingDeleteDailyRule: DailyTaskReminderRule?
+    @State private var isPresentingSaveTheme = false
+    @State private var editingSavedTheme: SavedThemePreset?
+    @State private var pendingDeleteSavedTheme: SavedThemePreset?
     @State private var authorizationStatusText = "读取中..."
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
-    @State private var showThemeImageImporter = false
 
     private var projectReminderPreference: ProjectTaskReminderPreferences? {
         projectReminderPreferences.first
@@ -72,9 +75,6 @@ struct SettingsView: View {
             guard newValue == .active else { return }
             Task { await refreshAuthorizationStatus() }
         }
-        .fileImporter(isPresented: $showThemeImageImporter, allowedContentTypes: [.image]) { result in
-            handleThemeImageImport(result: result)
-        }
         .sheet(isPresented: $isPresentingAddDailyRule) {
             AddDailyReminderRuleSheet { titlePattern, rawRule in
                 do {
@@ -107,6 +107,40 @@ struct SettingsView: View {
                 pendingReplaceImportKind = nil
             }
         }
+        .sheet(isPresented: $isPresentingSaveTheme) {
+            if let themePreference {
+                SaveThemeSheet(themePreference: themePreference) { name in
+                    do {
+                        try ThemeAssetService.saveCurrentTheme(named: name, from: themePreference, in: modelContext)
+                        isPresentingSaveTheme = false
+                    } catch {
+                        message = error.localizedDescription
+                    }
+                } onCancel: {
+                    isPresentingSaveTheme = false
+                }
+            }
+        }
+        .sheet(item: $editingSavedTheme) { preset in
+            EditSavedThemeSheet(theme: preset) { updatedName, updatedThemeHex, updatedSidebarHex, selectedImageURL, removeBackgroundImage in
+                do {
+                    try ThemeAssetService.updateSavedTheme(
+                        preset,
+                        name: updatedName,
+                        themeHex: updatedThemeHex,
+                        sidebarThemeHex: updatedSidebarHex,
+                        selectedImageURL: selectedImageURL,
+                        removeBackgroundImage: removeBackgroundImage,
+                        in: modelContext
+                    )
+                    editingSavedTheme = nil
+                } catch {
+                    message = error.localizedDescription
+                }
+            } onCancel: {
+                editingSavedTheme = nil
+            }
+        }
         .confirmationDialog(
             "删除提醒规则？",
             isPresented: Binding(
@@ -132,6 +166,33 @@ struct SettingsView: View {
                 Text("将删除规则“\(pendingDeleteDailyRule.titlePattern)”。删除后会立即重新计算所有每日清单任务的统一提醒。")
             }
         }
+        .confirmationDialog(
+            "删除保存的主题？",
+            isPresented: Binding(
+                get: { pendingDeleteSavedTheme != nil },
+                set: { isPresented in
+                    if !isPresented { pendingDeleteSavedTheme = nil }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) {
+                guard let pendingDeleteSavedTheme else { return }
+                do {
+                    try ThemeAssetService.deleteSavedTheme(pendingDeleteSavedTheme, in: modelContext)
+                } catch {
+                    message = error.localizedDescription
+                }
+                self.pendingDeleteSavedTheme = nil
+            }
+            Button("取消", role: .cancel) {
+                pendingDeleteSavedTheme = nil
+            }
+        } message: {
+            if let pendingDeleteSavedTheme {
+                Text("将删除主题“\(pendingDeleteSavedTheme.name)”。这会清理 ChronoTick 自己保存的主题图片副本，但不会删除原始图片。")
+            }
+        }
         .alert("结果", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("确定", role: .cancel) { message = nil }
         } message: {
@@ -145,66 +206,114 @@ struct SettingsView: View {
                 .font(.title3.bold())
 
             if let themePreference {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 16) {
-                        ThemePreviewSwatch(theme: themePreference)
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("自定义主题")
+                            .font(.headline)
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            ThemeColorRow(
-                                title: "主题色1",
-                                description: "用于按钮、选中态和强调元素。",
-                                selection: Binding(
-                                    get: { themePreference.themeColor },
-                                    set: { newValue in
-                                        themePreference.themeHex = NSColor(newValue).themeHexString
-                                        themePreference.touch()
-                                        try? modelContext.save()
-                                    }
-                                )
+                        HStack(alignment: .top, spacing: 16) {
+                            ThemePreviewSwatch(
+                                title: "当前主题",
+                                themeColor: themePreference.themeColor,
+                                sidebarThemeColor: themePreference.sidebarThemeColor,
+                                backgroundImageURL: themePreference.backgroundImageURL
                             )
 
-                            ThemeColorRow(
-                                title: "主题色2",
-                                description: "用于左侧栏不受背景图直接影响的基础底色。",
-                                selection: Binding(
-                                    get: { themePreference.sidebarThemeColor },
-                                    set: { newValue in
-                                        themePreference.sidebarThemeHex = NSColor(newValue).themeHexString
-                                        themePreference.touch()
-                                        try? modelContext.save()
-                                    }
+                            VStack(alignment: .leading, spacing: 10) {
+                                ThemeColorRow(
+                                    title: "主题色1",
+                                    description: "用于按钮、选中态和强调元素。",
+                                    selection: Binding(
+                                        get: { themePreference.themeColor },
+                                        set: { newValue in
+                                            themePreference.themeHex = NSColor(newValue).themeHexString
+                                            themePreference.touch()
+                                            try? modelContext.save()
+                                        }
+                                    )
                                 )
-                            )
 
-                            Text(themePreference.backgroundImagePath == nil ? "当前使用纯色背景。" : "当前背景图与主题色已独立。背景图用于页面背景，主题色用于按钮、选中态和重点元素。")
+                                ThemeColorRow(
+                                    title: "主题色2",
+                                    description: "用于左侧栏不受背景图直接影响的基础底色。",
+                                    selection: Binding(
+                                        get: { themePreference.sidebarThemeColor },
+                                        set: { newValue in
+                                            themePreference.sidebarThemeHex = NSColor(newValue).themeHexString
+                                            themePreference.touch()
+                                            try? modelContext.save()
+                                        }
+                                    )
+                                )
+
+                                Text(themePreference.backgroundImagePath == nil ? "当前使用纯色背景。" : "当前背景图与主题色已独立。背景图用于页面背景，主题色用于按钮、选中态和重点元素。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        HStack {
+                            Button("选择背景图") {
+                                selectCustomThemeImage()
+                            }
+                            if themePreference.backgroundImagePath != nil {
+                                Button("移除背景图") {
+                                    ThemeAssetService.clearBackgroundImage(for: themePreference)
+                                    try? modelContext.save()
+                                }
+                            }
+                            Button("恢复默认主题") {
+                                ThemeAssetService.clearBackgroundImage(for: themePreference)
+                                themePreference.themeHex = AppThemeSettings.defaultThemeHex
+                                themePreference.sidebarThemeHex = AppThemeSettings.defaultSidebarThemeHex
+                                themePreference.touch()
+                                try? modelContext.save()
+                            }
+                            Button("保存主题") {
+                                isPresentingSaveTheme = true
+                            }
+                        }
+
+                        if let imageURL = themePreference.backgroundImageURL {
+                            Text("背景图：\(imageURL.lastPathComponent)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
 
-                    HStack {
-                        Button("选择背景图") {
-                            showThemeImageImporter = true
-                        }
-                        if themePreference.backgroundImagePath != nil {
-                            Button("移除背景图") {
-                                ThemeAssetService.clearBackgroundImage(for: themePreference)
-                                try? modelContext.save()
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("已保存主题")
+                            .font(.headline)
+
+                        if savedThemes.isEmpty {
+                            Text("还没有保存任何主题。可以先配置自定义主题，再点击“保存主题”。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 16, alignment: .top)], spacing: 16) {
+                                ForEach(savedThemes) { preset in
+                                    SavedThemeCard(
+                                        theme: preset,
+                                        onApply: {
+                                            do {
+                                                try ThemeAssetService.applySavedTheme(preset, to: themePreference)
+                                                try modelContext.save()
+                                            } catch {
+                                                message = error.localizedDescription
+                                            }
+                                        },
+                                        onEdit: {
+                                            editingSavedTheme = preset
+                                        },
+                                        onDelete: {
+                                            pendingDeleteSavedTheme = preset
+                                        }
+                                    )
+                                }
                             }
                         }
-                        Button("恢复默认主题") {
-                            ThemeAssetService.clearBackgroundImage(for: themePreference)
-                            themePreference.themeHex = AppThemeSettings.defaultThemeHex
-                            themePreference.sidebarThemeHex = AppThemeSettings.defaultSidebarThemeHex
-                            themePreference.touch()
-                            try? modelContext.save()
-                        }
-                    }
-
-                    if let imageURL = themePreference.backgroundImageURL {
-                        Text("背景图：\(imageURL.lastPathComponent)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -518,9 +627,9 @@ struct SettingsView: View {
         }
     }
 
-    private func handleThemeImageImport(result: Result<URL, Error>) {
+    private func selectCustomThemeImage() {
+        guard let url = chooseThemeImageURL() else { return }
         do {
-            let url = try result.get()
             let theme = ThemeAssetService.ensureThemeSettings(in: modelContext)
             try ThemeAssetService.applyBackgroundImage(from: url, to: theme)
             try modelContext.save()
@@ -528,10 +637,22 @@ struct SettingsView: View {
             message = error.localizedDescription
         }
     }
+
+    private func chooseThemeImageURL() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.image]
+        return panel.runModal() == .OK ? panel.url : nil
+    }
 }
 
 private struct ThemePreviewSwatch: View {
-    let theme: AppThemeSettings
+    let title: String
+    let themeColor: Color
+    let sidebarThemeColor: Color
+    let backgroundImageURL: URL?
 
     var body: some View {
         ZStack {
@@ -539,7 +660,7 @@ private struct ThemePreviewSwatch: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            theme.themeColor.opacity(0.16).mix(with: .white, by: 0.78),
+                            themeColor.opacity(0.16).mix(with: .white, by: 0.78),
                             Color(nsColor: .windowBackgroundColor)
                         ],
                         startPoint: .topLeading,
@@ -547,7 +668,7 @@ private struct ThemePreviewSwatch: View {
                     )
                 )
 
-            if let imageURL = theme.backgroundImageURL,
+            if let imageURL = backgroundImageURL,
                let image = NSImage(contentsOf: imageURL) {
                 Image(nsImage: image)
                     .resizable()
@@ -561,12 +682,12 @@ private struct ThemePreviewSwatch: View {
             }
 
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(theme.themeColor.opacity(0.5), lineWidth: 1)
+                .stroke(themeColor.opacity(0.5), lineWidth: 1)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("ChronoTick")
+                Text(title)
                     .font(.headline)
-                Text(theme.backgroundImagePath == nil ? "纯色主题" : "图片主题")
+                Text(backgroundImageURL == nil ? "纯色主题" : "图片主题")
                     .font(.caption)
             }
             .foregroundStyle(.primary)
@@ -574,16 +695,77 @@ private struct ThemePreviewSwatch: View {
             .padding(12)
 
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.sidebarThemeColor.opacity(0.78))
+                .fill(sidebarThemeColor.opacity(0.78))
                 .frame(width: 52, height: 18)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(theme.themeColor.opacity(0.35), lineWidth: 1)
+                        .stroke(themeColor.opacity(0.35), lineWidth: 1)
                 )
                 .padding(10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         }
         .frame(width: 170, height: 108)
+    }
+}
+
+private struct SavedThemeCard: View {
+    let theme: SavedThemePreset
+    let onApply: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: onApply) {
+                ThemePreviewSwatch(
+                    title: theme.name,
+                    themeColor: theme.themeColor,
+                    sidebarThemeColor: theme.sidebarThemeColor,
+                    backgroundImageURL: theme.backgroundImageURL
+                )
+            }
+            .buttonStyle(.plain)
+
+            Text(theme.name)
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                ThemeChip(color: theme.themeColor, title: "主题色1")
+                ThemeChip(color: theme.sidebarThemeColor, title: "主题色2")
+            }
+
+            HStack {
+                Button("使用", action: onApply)
+                Button("编辑", action: onEdit)
+                Button("删除", role: .destructive, action: onDelete)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.secondary.opacity(0.06))
+        )
+    }
+}
+
+private struct ThemeChip: View {
+    let color: Color
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(color)
+                .frame(width: 16, height: 16)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(.black.opacity(0.08), lineWidth: 1)
+                )
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -634,6 +816,137 @@ private struct ThemeColorRow: View {
             .padding(16)
             .frame(width: 280)
         }
+    }
+}
+
+private struct SaveThemeSheet: View {
+    let themePreference: AppThemeSettings
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("保存主题")
+                .font(.title3.bold())
+
+            ThemePreviewSwatch(
+                title: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新主题" : name,
+                themeColor: themePreference.themeColor,
+                sidebarThemeColor: themePreference.sidebarThemeColor,
+                backgroundImageURL: themePreference.backgroundImageURL
+            )
+
+            TextField("主题名称", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            Text("会保存当前背景图片、主题色1和主题色2。背景图片会复制到 ChronoTick 自己的主题库中，不依赖原始文件位置。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                Button("保存") {
+                    onSave(name)
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 440)
+    }
+}
+
+private struct EditSavedThemeSheet: View {
+    let theme: SavedThemePreset
+    let onSave: (String, String, String, URL?, Bool) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+    @State private var themeColor: Color
+    @State private var sidebarThemeColor: Color
+    @State private var selectedImageURL: URL?
+    @State private var removeBackgroundImage = false
+
+    init(
+        theme: SavedThemePreset,
+        onSave: @escaping (String, String, String, URL?, Bool) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.theme = theme
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _name = State(initialValue: theme.name)
+        _themeColor = State(initialValue: theme.themeColor)
+        _sidebarThemeColor = State(initialValue: theme.sidebarThemeColor)
+    }
+
+    private var effectiveBackgroundImageURL: URL? {
+        if removeBackgroundImage { return nil }
+        return selectedImageURL ?? theme.backgroundImageURL
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("编辑主题")
+                .font(.title3.bold())
+
+            ThemePreviewSwatch(
+                title: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.name : name,
+                themeColor: themeColor,
+                sidebarThemeColor: sidebarThemeColor,
+                backgroundImageURL: effectiveBackgroundImageURL
+            )
+
+            TextField("主题名称", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            ThemeColorRow(title: "主题色1", description: "用于按钮、选中态和强调元素。", selection: $themeColor)
+            ThemeColorRow(title: "主题色2", description: "用于左侧栏不受背景图直接影响的基础底色。", selection: $sidebarThemeColor)
+
+            HStack {
+                Button("更换背景图") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = true
+                    panel.canChooseDirectories = false
+                    panel.allowsMultipleSelection = false
+                    panel.allowedContentTypes = [.image]
+                    if panel.runModal() == .OK {
+                        selectedImageURL = panel.url
+                        removeBackgroundImage = false
+                    }
+                }
+                if effectiveBackgroundImageURL != nil {
+                    Button("移除背景图") {
+                        selectedImageURL = nil
+                        removeBackgroundImage = true
+                    }
+                }
+            }
+
+            Text("保存后会同步更新主题数据库，并替换旧的主题图片副本，避免无用文件残留。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                Button("保存修改") {
+                    onSave(
+                        name,
+                        NSColor(themeColor).themeHexString,
+                        NSColor(sidebarThemeColor).themeHexString,
+                        selectedImageURL,
+                        removeBackgroundImage
+                    )
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
     }
 }
 

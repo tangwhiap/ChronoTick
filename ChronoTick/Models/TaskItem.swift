@@ -103,7 +103,7 @@ extension TaskItem {
     }
 
     var isVisibleInWeekView: Bool {
-        !isCompleted
+        true
     }
 }
 
@@ -266,6 +266,39 @@ final class AppThemeSettings {
     }
 }
 
+@Model
+final class SavedThemePreset {
+    @Attribute(.unique) var id: UUID
+    @Attribute(.unique) var name: String
+    var themeHex: String
+    var sidebarThemeHex: String
+    var backgroundImagePath: String?
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        themeHex: String,
+        sidebarThemeHex: String,
+        backgroundImagePath: String? = nil,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.name = name
+        self.themeHex = themeHex
+        self.sidebarThemeHex = sidebarThemeHex
+        self.backgroundImagePath = backgroundImagePath
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    func touch() {
+        updatedAt = .now
+    }
+}
+
 extension ProjectTask {
     var isVisibleInWeekView: Bool {
         !isCompleted && list != nil && deadlineDate != nil
@@ -293,6 +326,7 @@ extension ProjectTask {
 
 enum ThemeAssetService {
     private static let backgroundFilename = "theme-background"
+    private static let savedThemeFilenamePrefix = "saved-theme"
 
     static func ensureThemeSettings(in context: ModelContext) -> AppThemeSettings {
         let descriptor = FetchDescriptor<AppThemeSettings>(sortBy: [SortDescriptor(\.createdAt)])
@@ -307,27 +341,107 @@ enum ThemeAssetService {
     }
 
     static func applyBackgroundImage(from sourceURL: URL, to settings: AppThemeSettings) throws {
-        let destination = try persistBackgroundImage(from: sourceURL)
+        let destination = try persistImage(from: sourceURL, filenamePrefix: backgroundFilename)
         settings.backgroundImagePath = destination.path
         settings.touch()
     }
 
     static func clearBackgroundImage(for settings: AppThemeSettings) {
-        if let existingPath = settings.backgroundImagePath {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: existingPath))
-        }
+        deleteCopiedImage(atPath: settings.backgroundImagePath)
         settings.backgroundImagePath = nil
         settings.touch()
     }
 
-    static func persistBackgroundImage(from sourceURL: URL) throws -> URL {
+    static func saveCurrentTheme(named rawName: String, from settings: AppThemeSettings, in context: ModelContext) throws {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { throw ThemePresetError.emptyName }
+        let descriptor = FetchDescriptor<SavedThemePreset>(sortBy: [SortDescriptor(\.createdAt)])
+        let existingThemes = (try? context.fetch(descriptor)) ?? []
+        guard !existingThemes.contains(where: { $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame }) else {
+            throw ThemePresetError.duplicateName
+        }
+
+        let theme = SavedThemePreset(
+            name: trimmedName,
+            themeHex: settings.themeHex,
+            sidebarThemeHex: settings.sidebarThemeHex
+        )
+
+        if let sourcePath = settings.backgroundImagePath {
+            let sourceURL = URL(fileURLWithPath: sourcePath)
+            let destination = try persistImage(from: sourceURL, filenamePrefix: savedThemeAssetPrefix(for: theme.id))
+            theme.backgroundImagePath = destination.path
+        }
+
+        context.insert(theme)
+        try context.save()
+    }
+
+    static func applySavedTheme(_ preset: SavedThemePreset, to settings: AppThemeSettings) throws {
+        settings.themeHex = preset.themeHex
+        settings.sidebarThemeHex = preset.sidebarThemeHex
+
+        if let sourcePath = preset.backgroundImagePath {
+            let sourceURL = URL(fileURLWithPath: sourcePath)
+            let destination = try persistImage(from: sourceURL, filenamePrefix: backgroundFilename)
+            settings.backgroundImagePath = destination.path
+        } else {
+            clearBackgroundImage(for: settings)
+        }
+
+        settings.touch()
+    }
+
+    static func updateSavedTheme(
+        _ preset: SavedThemePreset,
+        name rawName: String,
+        themeHex: String,
+        sidebarThemeHex: String,
+        selectedImageURL: URL?,
+        removeBackgroundImage: Bool,
+        in context: ModelContext
+    ) throws {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { throw ThemePresetError.emptyName }
+        let descriptor = FetchDescriptor<SavedThemePreset>(sortBy: [SortDescriptor(\.createdAt)])
+        let existingThemes = (try? context.fetch(descriptor)) ?? []
+        guard !existingThemes.contains(where: { $0.id != preset.id && $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame }) else {
+            throw ThemePresetError.duplicateName
+        }
+
+        preset.name = trimmedName
+        preset.themeHex = themeHex
+        preset.sidebarThemeHex = sidebarThemeHex
+
+        if removeBackgroundImage {
+            deleteCopiedImage(atPath: preset.backgroundImagePath)
+            preset.backgroundImagePath = nil
+        } else if let selectedImageURL {
+            let destination = try persistImage(from: selectedImageURL, filenamePrefix: savedThemeAssetPrefix(for: preset.id))
+            if destination.path != preset.backgroundImagePath {
+                deleteCopiedImage(atPath: preset.backgroundImagePath)
+            }
+            preset.backgroundImagePath = destination.path
+        }
+
+        preset.touch()
+        try context.save()
+    }
+
+    static func deleteSavedTheme(_ preset: SavedThemePreset, in context: ModelContext) throws {
+        deleteCopiedImage(atPath: preset.backgroundImagePath)
+        context.delete(preset)
+        try context.save()
+    }
+
+    private static func persistImage(from sourceURL: URL, filenamePrefix: String) throws -> URL {
         let fileManager = FileManager.default
         let directory = try themeSupportDirectory()
         let ext = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension
-        let destination = directory.appendingPathComponent("\(backgroundFilename).\(ext)")
+        let destination = directory.appendingPathComponent("\(filenamePrefix).\(ext)")
 
         for existing in (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
-            if existing.lastPathComponent.hasPrefix(backgroundFilename) {
+            if existing.lastPathComponent.hasPrefix(filenamePrefix) {
                 try? fileManager.removeItem(at: existing)
             }
         }
@@ -337,6 +451,15 @@ enum ThemeAssetService {
         }
         try fileManager.copyItem(at: sourceURL, to: destination)
         return destination
+    }
+
+    private static func savedThemeAssetPrefix(for id: UUID) -> String {
+        "\(savedThemeFilenamePrefix)-\(id.uuidString)"
+    }
+
+    static func deleteCopiedImage(atPath path: String?) {
+        guard let path, !path.isEmpty else { return }
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: path))
     }
 
     private static func themeSupportDirectory() throws -> URL {
@@ -373,6 +496,43 @@ extension AppThemeSettings {
     var backgroundImageURL: URL? {
         guard let backgroundImagePath, !backgroundImagePath.isEmpty else { return nil }
         return URL(fileURLWithPath: backgroundImagePath)
+    }
+}
+
+extension SavedThemePreset {
+    var themeColor: Color {
+        Color(nsColor: nsThemeColor)
+    }
+
+    var nsThemeColor: NSColor {
+        NSColor(themeHex: themeHex) ?? NSColor(themeHex: AppThemeSettings.defaultThemeHex) ?? NSColor(calibratedRed: 0.04, green: 0.52, blue: 1, alpha: 1)
+    }
+
+    var sidebarThemeColor: Color {
+        Color(nsColor: nsSidebarThemeColor)
+    }
+
+    var nsSidebarThemeColor: NSColor {
+        NSColor(themeHex: sidebarThemeHex) ?? NSColor(themeHex: AppThemeSettings.defaultSidebarThemeHex) ?? NSColor(calibratedWhite: 0.96, alpha: 1)
+    }
+
+    var backgroundImageURL: URL? {
+        guard let backgroundImagePath, !backgroundImagePath.isEmpty else { return nil }
+        return URL(fileURLWithPath: backgroundImagePath)
+    }
+}
+
+enum ThemePresetError: LocalizedError {
+    case emptyName
+    case duplicateName
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyName:
+            return "主题名称不能为空。"
+        case .duplicateName:
+            return "主题名称不能与现有主题重复。"
+        }
     }
 }
 

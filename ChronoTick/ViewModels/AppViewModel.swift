@@ -2,6 +2,41 @@ import Foundation
 import SwiftData
 import SwiftUI
 
+struct WeekTimelineLayoutMetrics {
+    let scale: CGFloat
+
+    var hourHeight: CGFloat { 72 * scale }
+    var untimedAreaHeight: CGFloat { 70 * scale }
+    var columnWidth: CGFloat { 180 * scale }
+    var timeAxisWidth: CGFloat { 64 * scale }
+    var headerHeight: CGFloat { 28 * scale }
+}
+
+enum WeekTimelineZoomLevel: Int, CaseIterable {
+    case compact
+    case standard
+    case comfortable
+    case spacious
+
+    var scale: CGFloat {
+        switch self {
+        case .compact: return 0.74
+        case .standard: return 1.0
+        case .comfortable: return 1.14
+        case .spacious: return 1.3
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .compact: return "紧凑"
+        case .standard: return "标准"
+        case .comfortable: return "舒适"
+        case .spacious: return "宽松"
+        }
+    }
+}
+
 /// `AppViewModel` owns cross-screen navigation state and delegates all data mutations
 /// to a dedicated coordinator further below in this file.
 ///
@@ -11,6 +46,8 @@ import SwiftUI
 /// derived features such as the built-in "complete daily tasks" habit.
 @MainActor
 final class AppViewModel: ObservableObject {
+    private static let weekTimelineZoomDefaultsKey = "ChronoTick.weekTimelineZoomLevel"
+
     enum Section: String, CaseIterable, Identifiable {
         case week
         case dayList
@@ -49,10 +86,48 @@ final class AppViewModel: ObservableObject {
     @Published var editingTask: TaskItem?
     @Published var parserErrorMessage: String?
     @Published var importMessage: String?
+    @Published private(set) var weekTimelineZoomLevel: WeekTimelineZoomLevel
 
     /// We snap direct-manipulation edits in the week timeline to a fixed interval so dragging
     /// feels deterministic and tasks do not accumulate odd minute values over time.
     let snapMinutes = 5
+
+    init() {
+        let rawValue = UserDefaults.standard.integer(forKey: Self.weekTimelineZoomDefaultsKey)
+        weekTimelineZoomLevel = WeekTimelineZoomLevel(rawValue: rawValue) ?? .standard
+    }
+
+    /// The week timeline uses its own layout metrics so the user can fit the same workflow across
+    /// different monitor sizes without affecting the rest of the app's typography or controls.
+    var weekTimelineLayoutMetrics: WeekTimelineLayoutMetrics {
+        WeekTimelineLayoutMetrics(scale: weekTimelineZoomLevel.scale)
+    }
+
+    var canZoomInWeekTimeline: Bool {
+        weekTimelineZoomLevel.rawValue < WeekTimelineZoomLevel.allCases.count - 1
+    }
+
+    var canZoomOutWeekTimeline: Bool {
+        weekTimelineZoomLevel.rawValue > 0
+    }
+
+    func zoomInWeekTimeline() {
+        setWeekTimelineZoom(rawValue: weekTimelineZoomLevel.rawValue + 1)
+    }
+
+    func zoomOutWeekTimeline() {
+        setWeekTimelineZoom(rawValue: weekTimelineZoomLevel.rawValue - 1)
+    }
+
+    func resetWeekTimelineZoom() {
+        setWeekTimelineZoom(rawValue: WeekTimelineZoomLevel.standard.rawValue)
+    }
+
+    private func setWeekTimelineZoom(rawValue: Int) {
+        guard let level = WeekTimelineZoomLevel(rawValue: rawValue) else { return }
+        weekTimelineZoomLevel = level
+        UserDefaults.standard.set(level.rawValue, forKey: Self.weekTimelineZoomDefaultsKey)
+    }
 
     func goToToday() {
         selectedDate = Calendar.current.startOfDay(for: .now)
@@ -61,6 +136,14 @@ final class AppViewModel: ObservableObject {
     func goToTomorrow() {
         let today = Calendar.current.startOfDay(for: .now)
         selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
+    }
+
+    func goToPreviousWeek() {
+        selectedDate = Calendar.current.date(byAdding: .day, value: -7, to: selectedDate.startOfDay()) ?? selectedDate
+    }
+
+    func goToNextWeek() {
+        selectedDate = Calendar.current.date(byAdding: .day, value: 7, to: selectedDate.startOfDay()) ?? selectedDate
     }
 
     func openProjectTaskList(_ list: ProjectTaskList) {
@@ -237,8 +320,11 @@ enum TaskMutationCoordinator {
         modelContext: ModelContext
     ) async throws -> TaskItem {
         let previousOwningDate = editingTask?.date
+        let previousTitle = editingTask?.title
         let task = editingTask ?? TaskItem(title: draft.title, date: draft.owningDate)
         let owningDate = editingTask?.owningDate ?? draft.owningDate
+        let reminderRuleDescriptor = FetchDescriptor<DailyTaskReminderRule>(sortBy: [SortDescriptor(\.createdAt)])
+        let reminderRules = (try? modelContext.fetch(reminderRuleDescriptor)) ?? []
 
         task.title = draft.title
         task.date = owningDate
@@ -257,7 +343,16 @@ enum TaskMutationCoordinator {
 
         try modelContext.save()
         synchronizeDailyCompletionHabit(for: [previousOwningDate, task.date].compactMap { $0 }, in: modelContext)
-        await NotificationScheduler.shared.ensureNotificationState(for: task, in: modelContext)
+        await NotificationScheduler.shared.ensureNotificationState(
+            for: task,
+            in: modelContext,
+            suppressCurrentMinuteRecoveryForRuleOffsets: newlyActivatedRuleOffsets(
+                previousTitle: previousTitle,
+                newTitle: draft.title,
+                usesManualReminder: task.reminderEnabled,
+                rules: reminderRules
+            )
+        )
         return task
     }
 
@@ -436,6 +531,24 @@ enum TaskMutationCoordinator {
     private static func minuteOfDay(for date: Date) -> Int {
         let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
         return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+    }
+
+    /// Title edits can activate shared reminder rules that were previously inactive.
+    ///
+    /// When that happens after the original fire time has already passed earlier in the same
+    /// minute, we should not resurrect that past reminder. We therefore mark only the newly
+    /// activated shared offsets so the scheduler can skip its "current minute recovery" behavior
+    /// for those specific rules.
+    private static func newlyActivatedRuleOffsets(
+        previousTitle: String?,
+        newTitle: String,
+        usesManualReminder: Bool,
+        rules: [DailyTaskReminderRule]
+    ) -> Set<Int> {
+        guard !usesManualReminder, let previousTitle, previousTitle != newTitle else { return [] }
+        let previousOffsets = Set(ReminderSettingsService.matchedOffsets(for: previousTitle, rules: rules).map(\.seconds))
+        let newOffsets = Set(ReminderSettingsService.matchedOffsets(for: newTitle, rules: rules).map(\.seconds))
+        return newOffsets.subtracting(previousOffsets)
     }
 }
 

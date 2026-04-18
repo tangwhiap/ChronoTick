@@ -89,17 +89,55 @@ final class NotificationScheduler: NSObject, ObservableObject, UNUserNotificatio
         return false
     }
 
-    func ensureNotificationState(for task: TaskItem, in context: ModelContext) async {
+    func ensureNotificationState(
+        for task: TaskItem,
+        in context: ModelContext,
+        suppressCurrentMinuteRecoveryForRuleOffsets suppressedRuleOffsets: Set<Int> = []
+    ) async {
         // Always clear both pending and already delivered notifications before recomputing.
         // This keeps renamed or rescheduled tasks from inheriting stale reminders.
         await removeNotifications(withPrefix: dailyTaskPrefix(for: task))
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [task.notificationIdentifier])
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [task.notificationIdentifier])
 
-        guard task.isVisibleInWeekView, let start = task.startDateTime else { return }
+        guard !task.isCompleted, task.startDateTime != nil else { return }
 
         let descriptor = FetchDescriptor<DailyTaskReminderRule>(sortBy: [SortDescriptor(\.createdAt)])
         let rules = (try? context.fetch(descriptor)) ?? []
+        let futureDates = scheduledReminders(
+            for: task,
+            rules: rules,
+            suppressCurrentMinuteRecoveryForRuleOffsets: suppressedRuleOffsets
+        )
+        guard !futureDates.isEmpty else { return }
+
+        _ = await requestAuthorizationIfNeeded()
+        for scheduled in futureDates {
+            await addNotification(
+                identifier: scheduled.identifier,
+                title: "ChronoTick 每日清单任务提醒",
+                body: task.title,
+                detail: scheduled.description,
+                fireDate: scheduled.fireDate
+            )
+        }
+    }
+
+    /// Builds the concrete reminder fire times for a daily checklist task.
+    ///
+    /// This helper is intentionally separated from the UserNotifications side effects so we can
+    /// unit-test subtle rescheduling rules:
+    /// - shared regex rules should react immediately to title changes
+    /// - newly activated rules must not revive reminders that already passed earlier in the minute
+    /// - true task edits (for example moving a task) may still recover "current minute" reminders
+    func scheduledReminders(
+        for task: TaskItem,
+        rules: [DailyTaskReminderRule],
+        now: Date = .now,
+        suppressCurrentMinuteRecoveryForRuleOffsets suppressedRuleOffsets: Set<Int> = []
+    ) -> [ScheduledReminder] {
+        guard !task.isCompleted, let start = task.startDateTime else { return [] }
+
         var scheduledDates: [ScheduledReminder] = []
         if task.reminderEnabled {
             // Per-task manual reminders override the shared regex-based reminder rules.
@@ -121,19 +159,13 @@ final class NotificationScheduler: NSObject, ObservableObject, UNUserNotificatio
             }
         }
 
-        let futureDates = scheduledDates.compactMap { scheduled in
-            normalizedScheduledReminder(from: scheduled)
-        }
-        guard !futureDates.isEmpty else { return }
-
-        _ = await requestAuthorizationIfNeeded()
-        for scheduled in futureDates {
-            await addNotification(
-                identifier: scheduled.identifier,
-                title: "ChronoTick 每日清单任务提醒",
-                body: task.title,
-                detail: scheduled.description,
-                fireDate: scheduled.fireDate
+        return scheduledDates.compactMap { scheduled in
+            let offsetSeconds = scheduled.ruleOffsetSeconds
+            let allowCurrentMinuteRecovery = offsetSeconds.map { !suppressedRuleOffsets.contains($0) } ?? true
+            return normalizedScheduledReminder(
+                from: scheduled,
+                now: now,
+                allowCurrentMinuteRecovery: allowCurrentMinuteRecovery
             )
         }
     }
@@ -255,7 +287,11 @@ final class NotificationScheduler: NSObject, ObservableObject, UNUserNotificatio
         "project-task-\(task.id.uuidString)"
     }
 
-    private func normalizedScheduledReminder(from scheduled: ScheduledReminder, now: Date = .now) -> ScheduledReminder? {
+    private func normalizedScheduledReminder(
+        from scheduled: ScheduledReminder,
+        now: Date = .now,
+        allowCurrentMinuteRecovery: Bool = true
+    ) -> ScheduledReminder? {
         // If the target time is still in the future, schedule it as-is.
         if scheduled.fireDate > now {
             return scheduled
@@ -263,7 +299,8 @@ final class NotificationScheduler: NSObject, ObservableObject, UNUserNotificatio
 
         // If the user just edited the task and the reminder falls in the current minute,
         // reschedule it one second later instead of silently dropping it.
-        if Calendar.current.isDate(scheduled.fireDate, equalTo: now, toGranularity: .minute) {
+        if allowCurrentMinuteRecovery,
+           Calendar.current.isDate(scheduled.fireDate, equalTo: now, toGranularity: .minute) {
             return ScheduledReminder(
                 identifier: scheduled.identifier,
                 fireDate: now.addingTimeInterval(1),
@@ -301,8 +338,15 @@ enum NotificationPermissionResult {
     case unchanged(UNAuthorizationStatus)
 }
 
-private struct ScheduledReminder {
+struct ScheduledReminder: Equatable {
     let identifier: String
     let fireDate: Date
     let description: String
+
+    var ruleOffsetSeconds: Int? {
+        guard let rawSuffix = identifier.split(separator: "-").last,
+              let offset = Int(rawSuffix)
+        else { return nil }
+        return offset
+    }
 }

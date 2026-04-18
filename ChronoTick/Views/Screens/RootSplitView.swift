@@ -15,6 +15,8 @@ struct RootSplitView: View {
     @EnvironmentObject private var viewModel: AppViewModel
     @Query(sort: [SortDescriptor(\AppThemeSettings.createdAt)]) private var themeSettings: [AppThemeSettings]
 
+    init() {}
+
     private var themeSettingsValue: AppThemeSettings? {
         themeSettings.first
     }
@@ -380,6 +382,16 @@ private struct CreateProjectTaskListSheet: View {
 private struct HeaderBar: View {
     @EnvironmentObject private var viewModel: AppViewModel
 
+    private var weekRangeLabel: String {
+        let calendar = Calendar.current
+        let selected = viewModel.selectedDate.startOfDay()
+        let weekday = calendar.component(.weekday, from: selected)
+        let offset = weekday - calendar.firstWeekday
+        let weekStart = calendar.date(byAdding: .day, value: -offset, to: selected) ?? selected
+        let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
+        return "\(Self.weekRangeFormatter.string(from: weekStart)) -> \(Self.weekRangeFormatter.string(from: weekEnd))"
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             HStack {
@@ -391,17 +403,50 @@ private struct HeaderBar: View {
                 Button("计划明天") {
                     viewModel.goToTomorrow()
                 }
-                Spacer()
-                Button {
-                    viewModel.openCreateTask()
-                } label: {
-                    Label("新建任务", systemImage: "plus")
+                Spacer(minLength: 16)
+                HStack(spacing: 12) {
+                    if viewModel.selectedSection == .week {
+                        HStack(spacing: 10) {
+                            Button {
+                                viewModel.goToPreviousWeek()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Text(weekRangeLabel)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                                .frame(width: 120)
+
+                            Button {
+                                viewModel.goToNextWeek()
+                            } label: {
+                                Image(systemName: "chevron.right")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Button {
+                        viewModel.openCreateTask()
+                    } label: {
+                        Label("新建任务", systemImage: "plus")
+                    }
                 }
             }
             QuickAddBar()
         }
         .padding()
     }
+
+    private static let weekRangeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "M/d"
+        return formatter
+    }()
 }
 
 private struct AppThemeBackdrop: View {
