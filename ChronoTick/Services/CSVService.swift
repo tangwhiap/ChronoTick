@@ -55,7 +55,9 @@ enum CSVService {
     static func exportHabitCheckIns(_ habits: [Habit]) -> String {
         var rows: [String] = [habitHeaders.joined(separator: ",")]
         for habit in habits {
-            for checkIn in habit.checkIns.sorted(by: { $0.date < $1.date }) {
+            for checkIn in habit.checkIns
+                .filter(\.isCheckedIn)
+                .sorted(by: { $0.date < $1.date }) {
                 rows.append([
                     checkIn.id.uuidString,
                     escape(habit.name),
@@ -112,11 +114,59 @@ enum CSVService {
             guard row.count >= habitHeaders.count else {
                 throw CSVServiceError.invalidRow("第 \(index + 2) 行字段数量不足。")
             }
+            let normalizedName = row[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedName.isEmpty else {
+                throw CSVServiceError.invalidRow("第 \(index + 2) 行打卡项目名称为空。")
+            }
             guard let date = parseISO(row[2]), let checked = Bool(row[3]) else {
                 throw CSVServiceError.invalidRow("第 \(index + 2) 行日期或布尔值格式不合法。")
             }
-            return HabitCSVRecord(id: UUID(uuidString: row[0]), name: row[1], date: date, isCheckedIn: checked)
+            return HabitCSVRecord(id: UUID(uuidString: row[0]), name: normalizedName, date: Calendar.current.startOfDay(for: date), isCheckedIn: checked)
         }
+    }
+
+    /// Normalizes imported habit rows into the data shape used by the app:
+    /// one habit per unique name, and at most one effective check-in state per day.
+    ///
+    /// If the CSV contains repeated rows for the same habit on the same day, we merge them instead
+    /// of treating them as separate habits. A checked-in row wins over an unchecked row because the
+    /// current product model represents "unchecked" by the absence of a stored record.
+    static func normalizedHabitRecords(_ records: [HabitCSVRecord]) -> [HabitCSVRecord] {
+        var grouped: [String: [Date: HabitCSVRecord]] = [:]
+
+        for record in records {
+            let day = Calendar.current.startOfDay(for: record.date)
+            if let existing = grouped[record.name]?[day] {
+                let preferredRecord: HabitCSVRecord
+                if existing.isCheckedIn == record.isCheckedIn {
+                    preferredRecord = existing.id != nil ? existing : record
+                } else {
+                    preferredRecord = existing.isCheckedIn ? existing : record
+                }
+                grouped[record.name]?[day] = HabitCSVRecord(
+                    id: preferredRecord.id,
+                    name: record.name,
+                    date: day,
+                    isCheckedIn: preferredRecord.isCheckedIn
+                )
+            } else {
+                grouped[record.name, default: [:]][day] = HabitCSVRecord(
+                    id: record.id,
+                    name: record.name,
+                    date: day,
+                    isCheckedIn: record.isCheckedIn
+                )
+            }
+        }
+
+        return grouped
+            .keys
+            .sorted()
+            .flatMap { name in
+                grouped[name, default: [:]]
+                    .values
+                    .sorted { $0.date < $1.date }
+            }
     }
 
     static func merge(taskRecords: [TaskCSVRecord], into existing: [TaskItem], mode: CSVImportMode) -> [TaskCSVRecord] {

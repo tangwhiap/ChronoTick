@@ -438,7 +438,7 @@ struct SettingsView: View {
                 Button("导出任务 CSV") {
                     startExport(
                         text: CSVService.exportTasks(tasks),
-                        filename: "chronotick_tasks.csv"
+                        filename: defaultExportFilename(prefix: "chronotick_tasks")
                     )
                 }
                 Button("导入任务 CSV") {
@@ -450,7 +450,7 @@ struct SettingsView: View {
                 Button("导出打卡 CSV") {
                     startExport(
                         text: CSVService.exportHabitCheckIns(habits),
-                        filename: "chronotick_habits.csv"
+                        filename: defaultExportFilename(prefix: "chronotick_habits")
                     )
                 }
                 Button("导入打卡 CSV") {
@@ -495,6 +495,16 @@ struct SettingsView: View {
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    /// Builds a stable export filename with a local timestamp so repeated exports do not overwrite
+    /// each other by default. Keeping this in one helper makes the naming rule easy to adjust later.
+    private func defaultExportFilename(prefix: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return "\(prefix)_\(formatter.string(from: .now)).csv"
     }
 
     private func refreshAuthorizationStatus() async {
@@ -604,26 +614,70 @@ struct SettingsView: View {
         do {
             let url = try result.get()
             let csv = try String(contentsOf: url, encoding: .utf8)
-            let records = try CSVService.importHabitCheckIns(from: csv)
-            if importMode == .replace {
-                habits.forEach { modelContext.delete($0) }
-            }
+            let records = CSVService.normalizedHabitRecords(try CSVService.importHabitCheckIns(from: csv))
+            var habitsByName = try prepareHabitsForImport(mode: importMode)
             for record in records {
-                let habit = habits.first(where: { $0.name == record.name }) ?? Habit(name: record.name, colorHex: "#5B8DEF")
-                if !habits.contains(where: { $0.id == habit.id }) {
+                let habit = habitsByName[record.name] ?? Habit(name: record.name, colorHex: "#5B8DEF")
+                if habitsByName[record.name] == nil {
                     modelContext.insert(habit)
+                    habitsByName[record.name] = habit
                 }
                 if let existing = habit.checkIns.first(where: { Calendar.current.isDate($0.date, inSameDayAs: record.date) }) {
-                    existing.isCheckedIn = record.isCheckedIn
-                } else {
-                    let checkIn = HabitCheckIn(id: record.id ?? UUID(), date: record.date, isCheckedIn: record.isCheckedIn, habit: habit)
+                    if record.isCheckedIn {
+                        existing.isCheckedIn = true
+                    } else {
+                        modelContext.delete(existing)
+                    }
+                } else if record.isCheckedIn {
+                    let checkIn = HabitCheckIn(id: record.id ?? UUID(), date: record.date, isCheckedIn: true, habit: habit)
                     modelContext.insert(checkIn)
                 }
             }
             try modelContext.save()
-            message = "打卡导入完成，共处理 \(records.count) 条。"
+            message = "打卡导入完成，共处理 \(records.count) 条去重后的记录。"
         } catch {
             message = error.localizedDescription
+        }
+    }
+
+    /// Prepares the habit collection for CSV import.
+    ///
+    /// Replace mode should behave like a clean slate, so we delete every existing habit and return
+    /// an empty lookup table. Merge mode is more nuanced because old buggy builds may already have
+    /// produced duplicate habits with the same name. We collapse those duplicates up front so the
+    /// importer can safely rely on the "one habit per unique name" invariant.
+    private func prepareHabitsForImport(mode: CSVImportMode) throws -> [String: Habit] {
+        guard mode == .merge else {
+            habits.forEach { modelContext.delete($0) }
+            return [:]
+        }
+
+        var canonicalHabitsByName: [String: Habit] = [:]
+        for habit in habits.sorted(by: { $0.createdAt < $1.createdAt }) {
+            if let canonical = canonicalHabitsByName[habit.name] {
+                mergeExistingHabit(habit, into: canonical)
+                modelContext.delete(habit)
+            } else {
+                canonicalHabitsByName[habit.name] = habit
+            }
+        }
+        return canonicalHabitsByName
+    }
+
+    /// Merges duplicate historical habits that accidentally share the same name.
+    ///
+    /// We keep the earliest created habit as the canonical record and fold all check-ins from the
+    /// duplicate into it, coalescing rows that fall on the same day. A checked-in state wins over
+    /// an unchecked state because unchecked days are represented by the absence of a row elsewhere
+    /// in the app.
+    private func mergeExistingHabit(_ duplicate: Habit, into canonical: Habit) {
+        for checkIn in duplicate.checkIns {
+            if let existing = canonical.checkIns.first(where: { Calendar.current.isDate($0.date, inSameDayAs: checkIn.date) }) {
+                existing.isCheckedIn = existing.isCheckedIn || checkIn.isCheckedIn
+                modelContext.delete(checkIn)
+            } else {
+                checkIn.habit = canonical
+            }
         }
     }
 
