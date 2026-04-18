@@ -434,11 +434,16 @@ enum ThemeAssetService {
         try context.save()
     }
 
+    /// Persists a copy of the selected image under a fresh filename every time.
+    ///
+    /// Using a new path for each update avoids stale UI previews caused by view/image caching when
+    /// the app keeps overwriting the same file path in place.
     private static func persistImage(from sourceURL: URL, filenamePrefix: String) throws -> URL {
         let fileManager = FileManager.default
         let directory = try themeSupportDirectory()
         let ext = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension
-        let destination = directory.appendingPathComponent("\(filenamePrefix).\(ext)")
+        let uniqueSuffix = UUID().uuidString.lowercased()
+        let destination = directory.appendingPathComponent("\(filenamePrefix)-\(uniqueSuffix).\(ext)")
 
         for existing in (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
             if existing.lastPathComponent.hasPrefix(filenamePrefix) {
