@@ -160,6 +160,18 @@ final class AppViewModel: ObservableObject {
         openProjectTaskList(list)
     }
 
+    /// Renames an existing project task list without changing its identity or tasks.
+    ///
+    /// The list object itself remains the same; only the user-facing title changes, which keeps
+    /// navigation selection and task ownership stable.
+    func renameProjectTaskList(_ list: ProjectTaskList, to rawName: String, modelContext: ModelContext) {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        list.name = trimmed
+        list.touch()
+        try? modelContext.save()
+    }
+
     func deleteProjectTaskList(_ list: ProjectTaskList, modelContext: ModelContext) {
         TaskMutationCoordinator.deleteProjectTaskList(list, modelContext: modelContext)
     }

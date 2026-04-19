@@ -114,6 +114,7 @@ private struct SidebarView: View {
     @State private var isProjectListsExpanded = true
     @State private var pendingDeleteDate: Date?
     @State private var pendingDeleteProjectTaskList: ProjectTaskList?
+    @State private var renamingProjectTaskList: ProjectTaskList?
     @State private var isPresentingCreateProjectList = false
     let themeSettings: AppThemeSettings?
 
@@ -214,6 +215,9 @@ private struct SidebarView: View {
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                Button("重命名") {
+                                    renamingProjectTaskList = list
+                                }
                                 Button("删除列表", role: .destructive) {
                                     pendingDeleteProjectTaskList = list
                                 }
@@ -308,6 +312,14 @@ private struct SidebarView: View {
                 isPresentingCreateProjectList = false
             }
         }
+        .sheet(item: $renamingProjectTaskList) { list in
+            RenameProjectTaskListSheet(list: list) { newName in
+                viewModel.renameProjectTaskList(list, to: newName, modelContext: modelContext)
+                renamingProjectTaskList = nil
+            } onCancel: {
+                renamingProjectTaskList = nil
+            }
+        }
     }
 
     @ViewBuilder
@@ -376,6 +388,69 @@ private struct CreateProjectTaskListSheet: View {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         onConfirm(trimmed)
+    }
+}
+
+/// Renaming uses a dedicated sheet so the sidebar stays lightweight while still supporting
+/// future validation or additional metadata fields without crowding the context menu.
+private struct RenameProjectTaskListSheet: View {
+    @Query(sort: [SortDescriptor(\ProjectTaskList.createdAt)]) private var projectTaskLists: [ProjectTaskList]
+
+    let list: ProjectTaskList
+    let onConfirm: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+    @State private var validationMessage: String?
+
+    init(list: ProjectTaskList, onConfirm: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.list = list
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+        _name = State(initialValue: list.name)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("重命名任务列表")
+                .font(.title3.bold())
+            TextField("任务列表名称", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(submit)
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                Button("保存", action: submit)
+                    .disabled(trimmedName.isEmpty || trimmedName == list.name)
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func submit() {
+        guard !trimmedName.isEmpty else { return }
+        let duplicateExists = projectTaskLists.contains {
+            $0.id != list.id && $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame
+        }
+        guard !duplicateExists else {
+            validationMessage = "任务列表名称不能与现有任务列表重复。"
+            return
+        }
+
+        validationMessage = nil
+        onConfirm(trimmedName)
     }
 }
 

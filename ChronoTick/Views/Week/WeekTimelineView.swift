@@ -1,14 +1,44 @@
 import SwiftData
 import SwiftUI
 
+/// Collects the small set of theme-driven colors the week timeline cares about.
+///
+/// Keeping these derived values together avoids repeating opacity math throughout the view tree
+/// and makes future visual tuning much easier.
+private struct WeekTimelineTheme {
+    let incompleteTaskFillColor: Color
+    let incompleteTaskStrokeColor: Color
+    let untimedTaskFillColor: Color
+    let untimedAreaBackgroundColor: Color
+    let todayColumnColor: Color
+    let todayBadgeColor: Color
+
+    init(settings: AppThemeSettings?) {
+        let themeColor = settings?.themeColor ?? Color.accentColor
+        let sidebarThemeColor = settings?.sidebarThemeColor ?? Color(nsColor: NSColor(themeHex: AppThemeSettings.defaultSidebarThemeHex) ?? .underPageBackgroundColor)
+
+        incompleteTaskFillColor = themeColor.opacity(0.24)
+        incompleteTaskStrokeColor = themeColor.opacity(0.38)
+        untimedTaskFillColor = themeColor.opacity(0.18)
+        untimedAreaBackgroundColor = themeColor.opacity(0.06)
+        todayColumnColor = sidebarThemeColor.opacity(0.4)
+        todayBadgeColor = sidebarThemeColor.opacity(0.15)
+    }
+}
+
 struct WeekTimelineView: View {
     @EnvironmentObject private var viewModel: AppViewModel
     @Environment(\.modelContext) private var modelContext
     @Query(sort: [SortDescriptor(\TaskItem.date), SortDescriptor(\TaskItem.startDateTime), SortDescriptor(\TaskItem.createdAt)]) private var tasks: [TaskItem]
     @Query(sort: [SortDescriptor(\ProjectTask.deadlineDate), SortDescriptor(\ProjectTask.createdAt)]) private var projectTasks: [ProjectTask]
+    @Query(sort: [SortDescriptor(\AppThemeSettings.createdAt)]) private var themeSettings: [AppThemeSettings]
 
     private var metrics: WeekTimelineLayoutMetrics {
         viewModel.weekTimelineLayoutMetrics
+    }
+
+    private var theme: WeekTimelineTheme {
+        WeekTimelineTheme(settings: themeSettings.first)
     }
 
     private var weekDates: [Date] {
@@ -28,7 +58,8 @@ struct WeekTimelineView: View {
                     weekDates: weekDates,
                     metrics: metrics,
                     tasks: tasks,
-                    projectTasks: projectTasks
+                    projectTasks: projectTasks,
+                    theme: theme
                 )
             }
             .padding(.bottom, 40)
@@ -57,6 +88,7 @@ private struct WeekTimelineStrip: View {
     let metrics: WeekTimelineLayoutMetrics
     let tasks: [TaskItem]
     let projectTasks: [ProjectTask]
+    let theme: WeekTimelineTheme
 
     var body: some View {
         ForEach(Array(weekDates.enumerated()), id: \.offset) { index, date in
@@ -68,7 +100,8 @@ private struct WeekTimelineStrip: View {
                 timelineSegments: timelineSegmentsForDate(date),
                 projectDeadlineMarkers: projectDeadlineMarkersForDate(date),
                 metrics: metrics,
-                dayIdentifier: "day-\(Int(date.startOfDay().timeIntervalSinceReferenceDate))"
+                dayIdentifier: "day-\(Int(date.startOfDay().timeIntervalSinceReferenceDate))",
+                theme: theme
             )
         }
     }
@@ -142,6 +175,7 @@ private struct DayTimelineColumn: View {
     let projectDeadlineMarkers: [ProjectDeadlineCluster]
     let metrics: WeekTimelineLayoutMetrics
     let dayIdentifier: String
+    let theme: WeekTimelineTheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -156,12 +190,12 @@ private struct DayTimelineColumn: View {
                     ProjectDeadlineClusterView(cluster: cluster, columnWidth: metrics.columnWidth, hourHeight: metrics.hourHeight)
                 }
                 ForEach(timelineSegments) { segment in
-                    TaskTimelineCard(segment: segment, dayIndex: dayIndex, weekDates: weekDates, columnWidth: metrics.columnWidth, hourHeight: metrics.hourHeight)
+                    TaskTimelineCard(segment: segment, dayIndex: dayIndex, weekDates: weekDates, columnWidth: metrics.columnWidth, hourHeight: metrics.hourHeight, theme: theme)
                 }
             }
             .frame(width: metrics.columnWidth, height: metrics.hourHeight * 24)
         }
-        .background(viewModel.selectedDate.startOfDay() == date.startOfDay() ? Color.accentColor.opacity(0.06) : Color.clear)
+        .background(viewModel.selectedDate.startOfDay() == date.startOfDay() ? theme.todayColumnColor : Color.clear)
         .overlay(Rectangle().fill(Color.secondary.opacity(0.15)).frame(width: 1), alignment: .trailing)
         .id(dayIdentifier)
     }
@@ -175,7 +209,7 @@ private struct DayTimelineColumn: View {
                     .font(.caption.bold())
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                    .background(Capsule().fill(theme.todayBadgeColor))
             }
         }
         .frame(width: metrics.columnWidth, height: metrics.headerHeight)
@@ -207,7 +241,7 @@ private struct DayTimelineColumn: View {
                         .foregroundStyle(task.isCompleted ? .secondary : .primary)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(task.isCompleted ? Color.gray.opacity(0.14) : Color.orange.opacity(0.12))
+                                .fill(task.isCompleted ? Color.gray.opacity(0.14) : theme.untimedTaskFillColor)
                         )
                     }
                     .buttonStyle(.plain)
@@ -224,7 +258,7 @@ private struct DayTimelineColumn: View {
         }
         .padding(8)
         .frame(width: metrics.columnWidth, height: metrics.untimedAreaHeight, alignment: .topLeading)
-        .background(Color.orange.opacity(0.06))
+        .background(theme.untimedAreaBackgroundColor)
     }
 
     private var timelineGrid: some View {
@@ -252,6 +286,7 @@ private struct TaskTimelineCard: View {
     let weekDates: [Date]
     let columnWidth: CGFloat
     let hourHeight: CGFloat
+    let theme: WeekTimelineTheme
 
     @GestureState private var dragTranslation: CGSize = .zero
     @GestureState private var topResizeTranslation: CGFloat = 0
@@ -302,9 +337,9 @@ private struct TaskTimelineCard: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(task.isCompleted ? Color.gray.opacity(0.16) : Color.accentColor.opacity(0.18))
+                .fill(task.isCompleted ? Color.gray.opacity(0.16) : theme.incompleteTaskFillColor)
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.accentColor.opacity(0.28))
+                .stroke(task.isCompleted ? Color.gray.opacity(0.3) : theme.incompleteTaskStrokeColor)
 
             TaskTimelineCardContent(
                 title: task.title,
