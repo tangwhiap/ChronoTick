@@ -541,18 +541,56 @@ private struct AppThemeBackdrop: View {
 
                 if let imageURL = themeSettings?.backgroundImageURL,
                    let image = NSImage(contentsOf: imageURL) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .opacity(1)
+                    // Draw the photo across the whole app shell instead of estimating the
+                    // NavigationSplitView sidebar width. The sidebar paints its own themed surface
+                    // above this layer, and avoiding a guessed spacer prevents the visible seam that
+                    // appeared between the sidebar and the detail background on some window sizes.
+                    FocalCroppedImage(
+                        image: image,
+                        cropX: themeSettings?.normalizedBackgroundCropX ?? AppThemeSettings.defaultBackgroundCropX,
+                        cropY: themeSettings?.normalizedBackgroundCropY ?? AppThemeSettings.defaultBackgroundCropY,
+                        cropZoom: themeSettings?.normalizedBackgroundCropZoom ?? AppThemeSettings.defaultBackgroundCropZoom
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .opacity(1)
 
                     Rectangle()
                         .fill(.white.opacity(0.12))
                 }
             }
             .ignoresSafeArea()
+        }
+    }
+}
+
+struct FocalCroppedImage: View {
+    let image: NSImage
+    let cropX: Double
+    let cropY: Double
+    var cropZoom: Double = AppThemeSettings.defaultBackgroundCropZoom
+
+    var body: some View {
+        GeometryReader { geometry in
+            let imageSize = image.size
+            let containerSize = geometry.size
+            let zoom = cropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
+            let scale = max(
+                containerSize.width / max(imageSize.width, 1),
+                containerSize.height / max(imageSize.height, 1)
+            ) * zoom
+            let fittedSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            let overflowX = max(0, fittedSize.width - containerSize.width)
+            let overflowY = max(0, fittedSize.height - containerSize.height)
+
+            Image(nsImage: image)
+                .resizable()
+                .frame(width: fittedSize.width, height: fittedSize.height)
+                .offset(
+                    x: -overflowX * CGFloat(cropX.clamped(to: 0...1)),
+                    y: -overflowY * CGFloat(cropY.clamped(to: 0...1))
+                )
+                .frame(width: containerSize.width, height: containerSize.height, alignment: .topLeading)
+                .clipped()
         }
     }
 }

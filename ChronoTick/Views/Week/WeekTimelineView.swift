@@ -288,9 +288,8 @@ private struct TaskTimelineCard: View {
     let hourHeight: CGFloat
     let theme: WeekTimelineTheme
 
-    @GestureState private var dragTranslation: CGSize = .zero
-    @GestureState private var topResizeTranslation: CGFloat = 0
-    @GestureState private var bottomResizeTranslation: CGFloat = 0
+    @State private var activeInteraction: TimelineCardInteraction?
+    @State private var committedPreview: TimelineCardPreview?
 
     private var task: TaskItem { segment.task }
     private let horizontalInset: CGFloat = 6
@@ -318,16 +317,14 @@ private struct TaskTimelineCard: View {
         durationMinutes / 60 * hourHeight
     }
 
-    private var previewHeight: CGFloat {
-        max(cardHeight + bottomResizeTranslation - topResizeTranslation, 20)
-    }
-
-    private var previewYPosition: CGFloat {
-        yPosition + dragTranslation.height + topResizeTranslation
-    }
-
-    private var previewXPosition: CGFloat {
-        horizontalInset + dragTranslation.width
+    private var preview: TimelineCardPreview {
+        if let activeInteraction {
+            return makePreview(for: activeInteraction)
+        }
+        if let committedPreview {
+            return committedPreview
+        }
+        return basePreview
     }
 
     private var contentWidth: CGFloat {
@@ -343,10 +340,10 @@ private struct TaskTimelineCard: View {
 
             TaskTimelineCardContent(
                 title: task.title,
-                fullTimeText: task.displayTimeText,
-                startOnlyTimeText: startOnlyTimeText,
+                fullTimeText: preview.fullTimeText,
+                startOnlyTimeText: preview.startOnlyTimeText,
                 width: contentWidth,
-                height: previewHeight
+                height: preview.height
             )
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
@@ -369,8 +366,8 @@ private struct TaskTimelineCard: View {
                 }
             }
         }
-        .frame(width: columnWidth - (horizontalInset * 2), height: previewHeight, alignment: .topLeading)
-        .offset(x: previewXPosition, y: previewYPosition)
+        .frame(width: columnWidth - (horizontalInset * 2), height: preview.height, alignment: .topLeading)
+        .offset(x: preview.xPosition, y: preview.yPosition)
         .transaction { transaction in
             transaction.animation = nil
         }
@@ -394,63 +391,320 @@ private struct TaskTimelineCard: View {
             .padding(.horizontal, handleInset)
     }
 
-    private var startOnlyTimeText: String {
-        guard let start = task.startDateTime else { return "" }
-        return DateFormatter.displayTime.string(from: start)
-    }
-
     private var topResizeGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .updating($topResizeTranslation) { value, state, _ in
-                state = value.translation.height
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                activeInteraction = TimelineCardInteraction(mode: .resizeTop, translation: value.translation)
             }
             .onEnded { value in
-                let targetMinute = topTargetMinute(for: value.translation.height)
+                let finalPreview = makePreview(for: TimelineCardInteraction(mode: .resizeTop, translation: value.translation))
+                activeInteraction = nil
+                committedPreview = finalPreview
                 Task {
-                    await viewModel.resize(task: task, edge: .top, targetMinute: targetMinute, modelContext: modelContext)
+                    await viewModel.resize(task: task, edge: .top, targetMinute: finalPreview.targetStartMinute, modelContext: modelContext)
+                    await MainActor.run {
+                        committedPreview = nil
+                    }
                 }
             }
     }
 
     private var bottomResizeGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .updating($bottomResizeTranslation) { value, state, _ in
-                state = value.translation.height
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                activeInteraction = TimelineCardInteraction(mode: .resizeBottom, translation: value.translation)
             }
             .onEnded { value in
-                let targetMinute = bottomTargetMinute(for: value.translation.height)
+                let finalPreview = makePreview(for: TimelineCardInteraction(mode: .resizeBottom, translation: value.translation))
+                activeInteraction = nil
+                committedPreview = finalPreview
                 Task {
-                    await viewModel.resize(task: task, edge: .bottom, targetMinute: targetMinute, modelContext: modelContext)
+                    await viewModel.resize(task: task, edge: .bottom, targetMinute: finalPreview.targetEndMinute ?? finalPreview.targetStartMinute, modelContext: modelContext)
+                    await MainActor.run {
+                        committedPreview = nil
+                    }
                 }
             }
     }
 
     private var moveGesture: some Gesture {
-        DragGesture()
-            .updating($dragTranslation) { value, state, _ in
+        DragGesture(coordinateSpace: .global)
+            .onChanged { value in
                 guard segment.canMove else { return }
-                state = value.translation
+                activeInteraction = TimelineCardInteraction(mode: .move, translation: value.translation)
             }
             .onEnded { value in
                 guard segment.canMove else {
                     return
                 }
-                let rawIndex = dayIndex + Int((value.translation.width / columnWidth).rounded())
-                let targetIndex = max(0, min(weekDates.count - 1, rawIndex))
-                let targetDate = weekDates[targetIndex]
-                let targetMinute = Int((((yPosition + value.translation.height) / hourHeight) * 60).rounded())
+                let finalPreview = makePreview(for: TimelineCardInteraction(mode: .move, translation: value.translation))
+                activeInteraction = nil
+                committedPreview = finalPreview
                 Task {
-                    await viewModel.move(task: task, to: targetDate, startMinute: targetMinute, modelContext: modelContext)
+                    await viewModel.move(task: task, to: finalPreview.targetDate, startMinute: finalPreview.targetStartMinute, modelContext: modelContext)
+                    await MainActor.run {
+                        committedPreview = nil
+                    }
                 }
             }
     }
 
-    private func topTargetMinute(for delta: CGFloat) -> Int {
-        Int((((yPosition + delta) / hourHeight) * 60).rounded())
+    private var basePreview: TimelineCardPreview {
+        TimelineCardPreview(
+            xPosition: horizontalInset,
+            yPosition: yPosition,
+            height: cardHeight,
+            targetDate: segment.displayDate,
+            targetStartMinute: Int(startMinutes),
+            targetEndMinute: segment.displayKind == .range ? Int(startMinutes + durationMinutes) : nil,
+            displayStartDate: task.startDateTime ?? segment.startDate,
+            displayEndDate: task.endDateTime
+        )
     }
 
-    private func bottomTargetMinute(for delta: CGFloat) -> Int {
-        Int(((((yPosition + cardHeight) + delta) / hourHeight) * 60).rounded())
+    private func makePreview(for interaction: TimelineCardInteraction) -> TimelineCardPreview {
+        TimelineCardPreview.make(
+            interaction: interaction,
+            segment: segment,
+            dayIndex: dayIndex,
+            weekDates: weekDates,
+            columnWidth: columnWidth,
+            horizontalInset: horizontalInset,
+            yPosition: yPosition,
+            cardHeight: cardHeight,
+            hourHeight: hourHeight,
+            snapMinutes: viewModel.snapMinutes
+        )
+    }
+}
+
+private enum TimelineCardInteractionMode {
+    case move
+    case resizeTop
+    case resizeBottom
+}
+
+private struct TimelineCardInteraction {
+    let mode: TimelineCardInteractionMode
+    let translation: CGSize
+}
+
+private struct TimelineCardPreview {
+    let xPosition: CGFloat
+    let yPosition: CGFloat
+    let height: CGFloat
+    let targetDate: Date
+    let targetStartMinute: Int
+    let targetEndMinute: Int?
+    let displayStartDate: Date
+    let displayEndDate: Date?
+
+    var fullTimeText: String {
+        let formatter = DateFormatter.displayTime
+        guard let displayEndDate else {
+            return formatter.string(from: displayStartDate)
+        }
+        return "\(formatter.string(from: displayStartDate))–\(formatter.string(from: displayEndDate))"
+    }
+
+    var startOnlyTimeText: String {
+        DateFormatter.displayTime.string(from: displayStartDate)
+    }
+
+    static func make(
+        interaction: TimelineCardInteraction,
+        segment: TimelineTaskSegment,
+        dayIndex: Int,
+        weekDates: [Date],
+        columnWidth: CGFloat,
+        horizontalInset: CGFloat,
+        yPosition: CGFloat,
+        cardHeight: CGFloat,
+        hourHeight: CGFloat,
+        snapMinutes: Int,
+        calendar: Calendar = .current
+    ) -> TimelineCardPreview {
+        switch interaction.mode {
+        case .move:
+            return movePreview(
+                segment: segment,
+                dayIndex: dayIndex,
+                weekDates: weekDates,
+                columnWidth: columnWidth,
+                horizontalInset: horizontalInset,
+                yPosition: yPosition,
+                cardHeight: cardHeight,
+                hourHeight: hourHeight,
+                snapMinutes: snapMinutes,
+                translation: interaction.translation,
+                calendar: calendar
+            )
+        case .resizeTop:
+            return topResizePreview(
+                segment: segment,
+                horizontalInset: horizontalInset,
+                yPosition: yPosition,
+                hourHeight: hourHeight,
+                snapMinutes: snapMinutes,
+                translation: interaction.translation,
+                calendar: calendar
+            )
+        case .resizeBottom:
+            return bottomResizePreview(
+                segment: segment,
+                horizontalInset: horizontalInset,
+                yPosition: yPosition,
+                cardHeight: cardHeight,
+                hourHeight: hourHeight,
+                snapMinutes: snapMinutes,
+                translation: interaction.translation,
+                calendar: calendar
+            )
+        }
+    }
+
+    private static func movePreview(
+        segment: TimelineTaskSegment,
+        dayIndex: Int,
+        weekDates: [Date],
+        columnWidth: CGFloat,
+        horizontalInset: CGFloat,
+        yPosition: CGFloat,
+        cardHeight: CGFloat,
+        hourHeight: CGFloat,
+        snapMinutes: Int,
+        translation: CGSize,
+        calendar: Calendar
+    ) -> TimelineCardPreview {
+        let rawIndex = dayIndex + Int((translation.width / columnWidth).rounded())
+        let targetIndex = max(0, min(weekDates.count - 1, rawIndex))
+        let targetDate = calendar.startOfDay(for: weekDates[targetIndex])
+        let targetStartMinute = clampedStartMinute(
+            minuteFromYPosition(yPosition + translation.height, hourHeight: hourHeight),
+            snapMinutes: snapMinutes
+        )
+        let previewStart = date(on: targetDate, minute: targetStartMinute)
+        let duration = segment.task.endDateTime?.timeIntervalSince(segment.task.startDateTime ?? segment.startDate)
+        let previewEnd = duration.map { previewStart.addingTimeInterval(max(TimeInterval(snapMinutes * 60), $0)) }
+
+        return TimelineCardPreview(
+            xPosition: horizontalInset + translation.width,
+            yPosition: CGFloat(targetStartMinute) / 60 * hourHeight,
+            height: max(cardHeight, 20),
+            targetDate: targetDate,
+            targetStartMinute: targetStartMinute,
+            targetEndMinute: previewEnd.map { minuteOfDay(for: $0, calendar: calendar) },
+            displayStartDate: previewStart,
+            displayEndDate: previewEnd
+        )
+    }
+
+    private static func topResizePreview(
+        segment: TimelineTaskSegment,
+        horizontalInset: CGFloat,
+        yPosition: CGFloat,
+        hourHeight: CGFloat,
+        snapMinutes: Int,
+        translation: CGSize,
+        calendar: Calendar
+    ) -> TimelineCardPreview {
+        guard let currentEnd = segment.task.endDateTime else {
+            return unchangedPreview(segment: segment, horizontalInset: horizontalInset, yPosition: yPosition, hourHeight: hourHeight)
+        }
+
+        let startDay = calendar.startOfDay(for: segment.task.startDateTime ?? segment.startDate)
+        let maxAllowed = min((24 * 60) - snapMinutes, Int(currentEnd.timeIntervalSince(startDay) / 60) - snapMinutes)
+        let targetStartMinute = min(max(0, snap(minuteFromYPosition(yPosition + translation.height, hourHeight: hourHeight), to: snapMinutes)), maxAllowed)
+        let previewStart = date(on: startDay, minute: targetStartMinute)
+        let visibleEnd = min(currentEnd, calendar.date(byAdding: .day, value: 1, to: startDay) ?? currentEnd)
+        let previewHeight = max(CGFloat(visibleEnd.timeIntervalSince(previewStart) / 60) / 60 * hourHeight, 20)
+
+        return TimelineCardPreview(
+            xPosition: horizontalInset,
+            yPosition: CGFloat(targetStartMinute) / 60 * hourHeight,
+            height: previewHeight,
+            targetDate: startDay,
+            targetStartMinute: targetStartMinute,
+            targetEndMinute: minuteOfDay(for: currentEnd, calendar: calendar),
+            displayStartDate: previewStart,
+            displayEndDate: currentEnd
+        )
+    }
+
+    private static func bottomResizePreview(
+        segment: TimelineTaskSegment,
+        horizontalInset: CGFloat,
+        yPosition: CGFloat,
+        cardHeight: CGFloat,
+        hourHeight: CGFloat,
+        snapMinutes: Int,
+        translation: CGSize,
+        calendar: Calendar
+    ) -> TimelineCardPreview {
+        guard let currentStart = segment.task.startDateTime,
+              let currentEnd = segment.task.endDateTime
+        else {
+            return unchangedPreview(segment: segment, horizontalInset: horizontalInset, yPosition: yPosition, hourHeight: hourHeight)
+        }
+
+        let endDay = calendar.startOfDay(for: currentEnd)
+        let startMinutes = minuteOfDay(for: currentStart, calendar: calendar)
+        let minimum = calendar.isDate(currentStart, inSameDayAs: endDay) ? startMinutes + snapMinutes : 0
+        let targetEndMinute = max(minimum, min((23 * 60) + 59, snap(minuteFromYPosition(yPosition + cardHeight + translation.height, hourHeight: hourHeight), to: snapMinutes)))
+        let previewEnd = date(on: endDay, minute: targetEndMinute)
+        let previewHeight = max(CGFloat(previewEnd.timeIntervalSince(segment.startDate) / 60) / 60 * hourHeight, 20)
+
+        return TimelineCardPreview(
+            xPosition: horizontalInset,
+            yPosition: yPosition,
+            height: previewHeight,
+            targetDate: endDay,
+            targetStartMinute: startMinutes,
+            targetEndMinute: targetEndMinute,
+            displayStartDate: currentStart,
+            displayEndDate: previewEnd
+        )
+    }
+
+    private static func unchangedPreview(
+        segment: TimelineTaskSegment,
+        horizontalInset: CGFloat,
+        yPosition: CGFloat,
+        hourHeight: CGFloat
+    ) -> TimelineCardPreview {
+        let startMinute = minuteOfDay(for: segment.startDate, calendar: .current)
+        let endMinute = segment.displayKind == .range ? minuteOfDay(for: segment.endDate, calendar: .current) : nil
+        return TimelineCardPreview(
+            xPosition: horizontalInset,
+            yPosition: yPosition,
+            height: max(CGFloat(segment.endDate.timeIntervalSince(segment.startDate) / 60) / 60 * hourHeight, 20),
+            targetDate: segment.displayDate,
+            targetStartMinute: startMinute,
+            targetEndMinute: endMinute,
+            displayStartDate: segment.task.startDateTime ?? segment.startDate,
+            displayEndDate: segment.task.endDateTime
+        )
+    }
+
+    private static func clampedStartMinute(_ minute: Int, snapMinutes: Int) -> Int {
+        max(0, min((24 * 60) - snapMinutes, snap(minute, to: snapMinutes)))
+    }
+
+    private static func minuteFromYPosition(_ yPosition: CGFloat, hourHeight: CGFloat) -> Int {
+        Int(((yPosition / hourHeight) * 60).rounded())
+    }
+
+    private static func snap(_ minutes: Int, to step: Int) -> Int {
+        Int((Double(minutes) / Double(step)).rounded()) * step
+    }
+
+    private static func date(on day: Date, minute: Int) -> Date {
+        day.setting(hour: minute / 60, minute: minute % 60) ?? day
+    }
+
+    private static func minuteOfDay(for date: Date, calendar: Calendar) -> Int {
+        let comps = calendar.dateComponents([.hour, .minute], from: date)
+        return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
     }
 }
 

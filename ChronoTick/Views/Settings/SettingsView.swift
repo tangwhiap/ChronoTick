@@ -122,13 +122,16 @@ struct SettingsView: View {
             }
         }
         .sheet(item: $editingSavedTheme) { preset in
-            EditSavedThemeSheet(theme: preset) { updatedName, updatedThemeHex, updatedSidebarHex, selectedImageURL, removeBackgroundImage in
+            EditSavedThemeSheet(theme: preset) { updatedName, updatedThemeHex, updatedSidebarHex, cropX, cropY, cropZoom, selectedImageURL, removeBackgroundImage in
                 do {
                     try ThemeAssetService.updateSavedTheme(
                         preset,
                         name: updatedName,
                         themeHex: updatedThemeHex,
                         sidebarThemeHex: updatedSidebarHex,
+                        cropX: cropX,
+                        cropY: cropY,
+                        cropZoom: cropZoom,
                         selectedImageURL: selectedImageURL,
                         removeBackgroundImage: removeBackgroundImage,
                         in: modelContext
@@ -216,7 +219,10 @@ struct SettingsView: View {
                                 title: "当前主题",
                                 themeColor: themePreference.themeColor,
                                 sidebarThemeColor: themePreference.sidebarThemeColor,
-                                backgroundImageURL: themePreference.backgroundImageURL
+                                backgroundImageURL: themePreference.backgroundImageURL,
+                                cropX: themePreference.normalizedBackgroundCropX,
+                                cropY: themePreference.normalizedBackgroundCropY,
+                                cropZoom: themePreference.normalizedBackgroundCropZoom
                             )
 
                             VStack(alignment: .leading, spacing: 10) {
@@ -252,6 +258,36 @@ struct SettingsView: View {
                             }
                         }
 
+                        if let imageURL = themePreference.backgroundImageURL {
+                            ThemeImageCropControl(
+                                imageURL: imageURL,
+                                cropX: Binding(
+                                    get: { themePreference.normalizedBackgroundCropX },
+                                    set: { newValue in
+                                        themePreference.backgroundCropX = newValue
+                                        themePreference.touch()
+                                        try? modelContext.save()
+                                    }
+                                ),
+                                cropY: Binding(
+                                    get: { themePreference.normalizedBackgroundCropY },
+                                    set: { newValue in
+                                        themePreference.backgroundCropY = newValue
+                                        themePreference.touch()
+                                        try? modelContext.save()
+                                    }
+                                ),
+                                cropZoom: Binding(
+                                    get: { themePreference.normalizedBackgroundCropZoom },
+                                    set: { newValue in
+                                        themePreference.backgroundCropZoom = newValue
+                                        themePreference.touch()
+                                        try? modelContext.save()
+                                    }
+                                )
+                            )
+                        }
+
                         HStack {
                             Button("选择背景图") {
                                 selectCustomThemeImage()
@@ -266,6 +302,9 @@ struct SettingsView: View {
                                 ThemeAssetService.clearBackgroundImage(for: themePreference)
                                 themePreference.themeHex = AppThemeSettings.defaultThemeHex
                                 themePreference.sidebarThemeHex = AppThemeSettings.defaultSidebarThemeHex
+                                themePreference.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
+                                themePreference.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
+                                themePreference.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
                                 themePreference.touch()
                                 try? modelContext.save()
                             }
@@ -707,6 +746,9 @@ private struct ThemePreviewSwatch: View {
     let themeColor: Color
     let sidebarThemeColor: Color
     let backgroundImageURL: URL?
+    var cropX: Double = AppThemeSettings.defaultBackgroundCropX
+    var cropY: Double = AppThemeSettings.defaultBackgroundCropY
+    var cropZoom: Double = AppThemeSettings.defaultBackgroundCropZoom
 
     var body: some View {
         ZStack {
@@ -724,9 +766,7 @@ private struct ThemePreviewSwatch: View {
 
             if let imageURL = backgroundImageURL,
                let image = NSImage(contentsOf: imageURL) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
+                FocalCroppedImage(image: image, cropX: cropX, cropY: cropY, cropZoom: cropZoom)
                     .frame(width: 170, height: 108)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .opacity(0.92)
@@ -775,7 +815,10 @@ private struct SavedThemeCard: View {
                     title: theme.name,
                     themeColor: theme.themeColor,
                     sidebarThemeColor: theme.sidebarThemeColor,
-                    backgroundImageURL: theme.backgroundImageURL
+                    backgroundImageURL: theme.backgroundImageURL,
+                    cropX: theme.normalizedBackgroundCropX,
+                    cropY: theme.normalizedBackgroundCropY,
+                    cropZoom: theme.normalizedBackgroundCropZoom
                 )
             }
             .buttonStyle(.plain)
@@ -820,6 +863,400 @@ private struct ThemeChip: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct ThemeImageCropControl: View {
+    let imageURL: URL
+    @Binding var cropX: Double
+    @Binding var cropY: Double
+    @Binding var cropZoom: Double
+    @State private var isPresentingEditor = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if let image = NSImage(contentsOf: imageURL) {
+                FocalCroppedImage(image: image, cropX: cropX, cropY: cropY, cropZoom: cropZoom)
+                    .frame(width: 96, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(.black.opacity(0.08), lineWidth: 1)
+                    )
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("图片裁剪范围")
+                    .font(.subheadline.bold())
+                Text("打开裁剪窗口后，拖动固定比例的取景框来选择背景图显示区域。原图会完整保存，不会被裁掉。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("调整裁剪范围") {
+                        isPresentingEditor = true
+                    }
+                    Button("居中") {
+                        cropX = AppThemeSettings.defaultBackgroundCropX
+                        cropY = AppThemeSettings.defaultBackgroundCropY
+                        cropZoom = AppThemeSettings.defaultBackgroundCropZoom
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.06))
+        )
+        .sheet(isPresented: $isPresentingEditor) {
+            ThemeImageCropEditorSheet(
+                imageURL: imageURL,
+                initialCropX: cropX,
+                initialCropY: cropY,
+                initialCropZoom: cropZoom
+            ) { newCropX, newCropY, newCropZoom in
+                cropX = newCropX
+                cropY = newCropY
+                cropZoom = newCropZoom
+                isPresentingEditor = false
+            } onCancel: {
+                isPresentingEditor = false
+            }
+        }
+    }
+}
+
+/// Full-image crop editor for theme backgrounds.
+///
+/// ChronoTick stores the original image file and only stores two normalized crop-position values.
+/// This sheet gives those values a direct-manipulation UI: the user drags a fixed-aspect selection
+/// rectangle over the full image, similar to a screenshot tool. The rectangle represents the part of
+/// the source image that should be used when the app later scales the image to fill the window.
+private struct ThemeImageCropEditorSheet: View {
+    private static let cropAspectRatio: CGFloat = 16.0 / 10.0
+
+    let imageURL: URL
+    let initialCropX: Double
+    let initialCropY: Double
+    let initialCropZoom: Double
+    let onSave: (Double, Double, Double) -> Void
+    let onCancel: () -> Void
+
+    @State private var cropX: Double
+    @State private var cropY: Double
+    @State private var cropZoom: Double
+
+    init(
+        imageURL: URL,
+        initialCropX: Double,
+        initialCropY: Double,
+        initialCropZoom: Double,
+        onSave: @escaping (Double, Double, Double) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.imageURL = imageURL
+        self.initialCropX = initialCropX
+        self.initialCropY = initialCropY
+        self.initialCropZoom = initialCropZoom
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _cropX = State(initialValue: initialCropX.clamped(to: 0...1))
+        _cropY = State(initialValue: initialCropY.clamped(to: 0...1))
+        _cropZoom = State(initialValue: initialCropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("调整图片裁剪范围")
+                .font(.title3.bold())
+
+            Text("拖动亮色取景框来选择背景图显示区域。取景框比例固定，因此图片不会被拉伸或变形；保存时仍保留完整原图。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let image = NSImage(contentsOf: imageURL) {
+                CropSelectionCanvas(
+                    image: image,
+                    cropAspectRatio: Self.cropAspectRatio,
+                    cropX: $cropX,
+                    cropY: $cropY,
+                    cropZoom: $cropZoom
+                )
+                .frame(width: 720, height: 440)
+            } else {
+                ContentUnavailableView("无法读取背景图", systemImage: "photo", description: Text(imageURL.lastPathComponent))
+                    .frame(width: 720, height: 300)
+            }
+
+            HStack {
+                Button("居中") {
+                    cropX = AppThemeSettings.defaultBackgroundCropX
+                    cropY = AppThemeSettings.defaultBackgroundCropY
+                    cropZoom = AppThemeSettings.defaultBackgroundCropZoom
+                }
+                .buttonStyle(.borderless)
+
+                Spacer()
+
+                Button("取消", action: onCancel)
+                Button("保存裁剪") {
+                    onSave(cropX, cropY, cropZoom)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 780)
+    }
+}
+
+private struct CropSelectionCanvas: View {
+    private static let coordinateSpaceName = "themeCropCanvas"
+
+    let image: NSImage
+    let cropAspectRatio: CGFloat
+    @Binding var cropX: Double
+    @Binding var cropY: Double
+    @Binding var cropZoom: Double
+    @State private var moveStartOrigin: CGPoint?
+    @State private var resizeStartFixedCorner: CGPoint?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let layout = CropLayout(
+                imageSize: image.size,
+                containerSize: geometry.size,
+                cropAspectRatio: cropAspectRatio,
+                cropX: cropX,
+                cropY: cropY,
+                cropZoom: cropZoom
+            )
+
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.secondary.opacity(0.08))
+
+                Image(nsImage: image)
+                    .resizable()
+                    .frame(width: layout.displayImageRect.width, height: layout.displayImageRect.height)
+                    .offset(x: layout.displayImageRect.minX, y: layout.displayImageRect.minY)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                dimmingRects(for: layout)
+
+                Rectangle()
+                    .fill(.clear)
+                    .frame(width: layout.displayImageRect.width, height: layout.displayImageRect.height)
+                    .offset(x: layout.displayImageRect.minX, y: layout.displayImageRect.minY)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.coordinateSpaceName))
+                            .onChanged { value in
+                                if moveStartOrigin == nil {
+                                    moveStartOrigin = layout.cropRect.origin
+                                }
+                                guard let moveStartOrigin else { return }
+                                updateCropOrigin(
+                                    CGPoint(
+                                        x: moveStartOrigin.x + value.translation.width,
+                                        y: moveStartOrigin.y + value.translation.height
+                                    ),
+                                    cropSize: layout.cropRect.size,
+                                    layout: layout
+                                )
+                            }
+                            .onEnded { _ in
+                                moveStartOrigin = nil
+                            }
+                    )
+
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(.white, lineWidth: 2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(.black.opacity(0.35), lineWidth: 1)
+                    )
+                    .frame(width: layout.cropRect.width, height: layout.cropRect.height)
+                    .offset(x: layout.cropRect.minX, y: layout.cropRect.minY)
+                    .shadow(color: .black.opacity(0.24), radius: 10, x: 0, y: 4)
+                    .allowsHitTesting(false)
+
+                cropHandle(at: layout.cropRect.origin, systemImage: "arrow.up.left.and.arrow.down.right")
+                    .zIndex(1)
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.coordinateSpaceName))
+                            .onChanged { value in
+                                if resizeStartFixedCorner == nil {
+                                    resizeStartFixedCorner = CGPoint(x: layout.cropRect.maxX, y: layout.cropRect.maxY)
+                                }
+                                guard let resizeStartFixedCorner else { return }
+                                resizeCrop(from: value.location, fixedCorner: resizeStartFixedCorner, layout: layout)
+                            }
+                            .onEnded { _ in
+                                resizeStartFixedCorner = nil
+                            }
+                    )
+
+                cropHandle(at: CGPoint(x: layout.cropRect.maxX, y: layout.cropRect.maxY), systemImage: "arrow.down.right.and.arrow.up.left")
+                    .zIndex(1)
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.coordinateSpaceName))
+                            .onChanged { value in
+                                if resizeStartFixedCorner == nil {
+                                    resizeStartFixedCorner = layout.cropRect.origin
+                                }
+                                guard let resizeStartFixedCorner else { return }
+                                resizeCrop(from: value.location, fixedCorner: resizeStartFixedCorner, layout: layout)
+                            }
+                            .onEnded { _ in
+                                resizeStartFixedCorner = nil
+                            }
+                    )
+            }
+            .coordinateSpace(name: Self.coordinateSpaceName)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(.black.opacity(0.08), lineWidth: 1)
+            )
+        }
+    }
+
+    private func cropHandle(at point: CGPoint, systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.primary)
+            .frame(width: 32, height: 32)
+            .background(.regularMaterial, in: Circle())
+            .overlay(Circle().stroke(.white.opacity(0.9), lineWidth: 1))
+            .shadow(color: .black.opacity(0.24), radius: 5, x: 0, y: 2)
+            .frame(width: 48, height: 48)
+            .position(point)
+            .contentShape(Circle())
+    }
+
+    @ViewBuilder
+    private func dimmingRects(for layout: CropLayout) -> some View {
+        Rectangle()
+            .fill(.black.opacity(0.38))
+            .frame(width: layout.displayImageRect.width, height: max(0, layout.cropRect.minY - layout.displayImageRect.minY))
+            .offset(x: layout.displayImageRect.minX, y: layout.displayImageRect.minY)
+
+        Rectangle()
+            .fill(.black.opacity(0.38))
+            .frame(width: layout.displayImageRect.width, height: max(0, layout.displayImageRect.maxY - layout.cropRect.maxY))
+            .offset(x: layout.displayImageRect.minX, y: layout.cropRect.maxY)
+
+        Rectangle()
+            .fill(.black.opacity(0.38))
+            .frame(width: max(0, layout.cropRect.minX - layout.displayImageRect.minX), height: layout.cropRect.height)
+            .offset(x: layout.displayImageRect.minX, y: layout.cropRect.minY)
+
+        Rectangle()
+            .fill(.black.opacity(0.38))
+            .frame(width: max(0, layout.displayImageRect.maxX - layout.cropRect.maxX), height: layout.cropRect.height)
+            .offset(x: layout.cropRect.maxX, y: layout.cropRect.minY)
+    }
+
+    private func updateCropOrigin(_ proposedOrigin: CGPoint, cropSize: CGSize, layout: CropLayout) {
+        let maxOriginX = layout.displayImageRect.maxX - cropSize.width
+        let maxOriginY = layout.displayImageRect.maxY - cropSize.height
+        let clampedOriginX = min(max(proposedOrigin.x, layout.displayImageRect.minX), maxOriginX)
+        let clampedOriginY = min(max(proposedOrigin.y, layout.displayImageRect.minY), maxOriginY)
+        let horizontalRange = max(0, maxOriginX - layout.displayImageRect.minX)
+        let verticalRange = max(0, maxOriginY - layout.displayImageRect.minY)
+
+        if horizontalRange > 0 {
+            cropX = Double((clampedOriginX - layout.displayImageRect.minX) / horizontalRange).clamped(to: 0...1)
+        } else {
+            cropX = AppThemeSettings.defaultBackgroundCropX
+        }
+
+        if verticalRange > 0 {
+            cropY = Double((clampedOriginY - layout.displayImageRect.minY) / verticalRange).clamped(to: 0...1)
+        } else {
+            cropY = AppThemeSettings.defaultBackgroundCropY
+        }
+    }
+
+    private func resizeCrop(from movingCorner: CGPoint, fixedCorner: CGPoint, layout: CropLayout) {
+        let minWidth = min(layout.baseCropSize.width, max(80, layout.displayImageRect.width * 0.16))
+        let proposedWidth = abs(fixedCorner.x - movingCorner.x)
+        let proposedHeight = abs(fixedCorner.y - movingCorner.y)
+        let proposedAspectWidth = proposedHeight <= proposedWidth / cropAspectRatio
+            ? proposedWidth
+            : proposedHeight * cropAspectRatio
+        let maxWidthFromBounds: CGFloat
+        let fixedOnRight = fixedCorner.x >= layout.displayImageRect.midX
+        let fixedOnBottom = fixedCorner.y >= layout.displayImageRect.midY
+
+        if fixedOnRight {
+            maxWidthFromBounds = min(layout.baseCropSize.width, fixedCorner.x - layout.displayImageRect.minX)
+        } else {
+            maxWidthFromBounds = min(layout.baseCropSize.width, layout.displayImageRect.maxX - fixedCorner.x)
+        }
+
+        let maxHeightFromBounds = fixedOnBottom
+            ? fixedCorner.y - layout.displayImageRect.minY
+            : layout.displayImageRect.maxY - fixedCorner.y
+        let maxWidthLimitedByHeight = maxHeightFromBounds * cropAspectRatio
+        let resizedWidth = min(max(proposedAspectWidth, minWidth), maxWidthFromBounds, maxWidthLimitedByHeight)
+        let resizedHeight = resizedWidth / cropAspectRatio
+        let originX = fixedOnRight ? fixedCorner.x - resizedWidth : fixedCorner.x
+        let originY = fixedOnBottom ? fixedCorner.y - resizedHeight : fixedCorner.y
+        let maxOriginX = layout.displayImageRect.maxX - resizedWidth
+        let maxOriginY = layout.displayImageRect.maxY - resizedHeight
+        let clampedOriginX = min(max(originX, layout.displayImageRect.minX), maxOriginX)
+        let clampedOriginY = min(max(originY, layout.displayImageRect.minY), maxOriginY)
+        let horizontalRange = max(0, maxOriginX - layout.displayImageRect.minX)
+        let verticalRange = max(0, maxOriginY - layout.displayImageRect.minY)
+
+        cropZoom = Double(layout.baseCropSize.width / max(resizedWidth, 1)).clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
+        cropX = horizontalRange > 0 ? Double((clampedOriginX - layout.displayImageRect.minX) / horizontalRange).clamped(to: 0...1) : AppThemeSettings.defaultBackgroundCropX
+        cropY = verticalRange > 0 ? Double((clampedOriginY - layout.displayImageRect.minY) / verticalRange).clamped(to: 0...1) : AppThemeSettings.defaultBackgroundCropY
+    }
+}
+
+/// Computes the relationship between the full image, the fixed-aspect crop rectangle, and the
+/// preview canvas. Keeping the math in one value type makes the drag behavior easy to test mentally
+/// and prevents view code from accumulating one-off geometry patches.
+private struct CropLayout {
+    let displayImageRect: CGRect
+    let baseCropSize: CGSize
+    let cropRect: CGRect
+
+    init(imageSize: CGSize, containerSize: CGSize, cropAspectRatio: CGFloat, cropX: Double, cropY: Double, cropZoom: Double) {
+        let safeImageSize = CGSize(width: max(imageSize.width, 1), height: max(imageSize.height, 1))
+        let displayScale = min(
+            containerSize.width / safeImageSize.width,
+            containerSize.height / safeImageSize.height
+        )
+        let displaySize = CGSize(width: safeImageSize.width * displayScale, height: safeImageSize.height * displayScale)
+        let displayOrigin = CGPoint(
+            x: (containerSize.width - displaySize.width) / 2,
+            y: (containerSize.height - displaySize.height) / 2
+        )
+        displayImageRect = CGRect(origin: displayOrigin, size: displaySize)
+
+        let imageAspectRatio = safeImageSize.width / safeImageSize.height
+        let cropSizeInImage: CGSize
+        if imageAspectRatio > cropAspectRatio {
+            cropSizeInImage = CGSize(width: safeImageSize.height * cropAspectRatio, height: safeImageSize.height)
+        } else {
+            cropSizeInImage = CGSize(width: safeImageSize.width, height: safeImageSize.width / cropAspectRatio)
+        }
+
+        let zoom = cropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
+        baseCropSize = CGSize(width: cropSizeInImage.width * displayScale, height: cropSizeInImage.height * displayScale)
+        let cropDisplaySize = CGSize(width: baseCropSize.width / zoom, height: baseCropSize.height / zoom)
+        let overflowX = max(0, displaySize.width - cropDisplaySize.width)
+        let overflowY = max(0, displaySize.height - cropDisplaySize.height)
+        let cropOrigin = CGPoint(
+            x: displayOrigin.x + overflowX * CGFloat(cropX.clamped(to: 0...1)),
+            y: displayOrigin.y + overflowY * CGFloat(cropY.clamped(to: 0...1))
+        )
+        cropRect = CGRect(origin: cropOrigin, size: cropDisplaySize)
     }
 }
 
@@ -889,7 +1326,10 @@ private struct SaveThemeSheet: View {
                 title: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新主题" : name,
                 themeColor: themePreference.themeColor,
                 sidebarThemeColor: themePreference.sidebarThemeColor,
-                backgroundImageURL: themePreference.backgroundImageURL
+                backgroundImageURL: themePreference.backgroundImageURL,
+                cropX: themePreference.normalizedBackgroundCropX,
+                cropY: themePreference.normalizedBackgroundCropY,
+                cropZoom: themePreference.normalizedBackgroundCropZoom
             )
 
             TextField("主题名称", text: $name)
@@ -915,18 +1355,21 @@ private struct SaveThemeSheet: View {
 
 private struct EditSavedThemeSheet: View {
     let theme: SavedThemePreset
-    let onSave: (String, String, String, URL?, Bool) -> Void
+    let onSave: (String, String, String, Double, Double, Double, URL?, Bool) -> Void
     let onCancel: () -> Void
 
     @State private var name: String
     @State private var themeColor: Color
     @State private var sidebarThemeColor: Color
+    @State private var cropX: Double
+    @State private var cropY: Double
+    @State private var cropZoom: Double
     @State private var selectedImageURL: URL?
     @State private var removeBackgroundImage = false
 
     init(
         theme: SavedThemePreset,
-        onSave: @escaping (String, String, String, URL?, Bool) -> Void,
+        onSave: @escaping (String, String, String, Double, Double, Double, URL?, Bool) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.theme = theme
@@ -935,6 +1378,9 @@ private struct EditSavedThemeSheet: View {
         _name = State(initialValue: theme.name)
         _themeColor = State(initialValue: theme.themeColor)
         _sidebarThemeColor = State(initialValue: theme.sidebarThemeColor)
+        _cropX = State(initialValue: theme.normalizedBackgroundCropX)
+        _cropY = State(initialValue: theme.normalizedBackgroundCropY)
+        _cropZoom = State(initialValue: theme.normalizedBackgroundCropZoom)
     }
 
     private var effectiveBackgroundImageURL: URL? {
@@ -951,7 +1397,10 @@ private struct EditSavedThemeSheet: View {
                 title: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.name : name,
                 themeColor: themeColor,
                 sidebarThemeColor: sidebarThemeColor,
-                backgroundImageURL: effectiveBackgroundImageURL
+                backgroundImageURL: effectiveBackgroundImageURL,
+                cropX: cropX,
+                cropY: cropY,
+                cropZoom: cropZoom
             )
 
             TextField("主题名称", text: $name)
@@ -970,14 +1419,24 @@ private struct EditSavedThemeSheet: View {
                     if panel.runModal() == .OK {
                         selectedImageURL = panel.url
                         removeBackgroundImage = false
+                        cropX = AppThemeSettings.defaultBackgroundCropX
+                        cropY = AppThemeSettings.defaultBackgroundCropY
+                        cropZoom = AppThemeSettings.defaultBackgroundCropZoom
                     }
                 }
                 if effectiveBackgroundImageURL != nil {
                     Button("移除背景图") {
                         selectedImageURL = nil
                         removeBackgroundImage = true
+                        cropX = AppThemeSettings.defaultBackgroundCropX
+                        cropY = AppThemeSettings.defaultBackgroundCropY
+                        cropZoom = AppThemeSettings.defaultBackgroundCropZoom
                     }
                 }
+            }
+
+            if let effectiveBackgroundImageURL {
+                ThemeImageCropControl(imageURL: effectiveBackgroundImageURL, cropX: $cropX, cropY: $cropY, cropZoom: $cropZoom)
             }
 
             Text("保存后会同步更新主题数据库，并替换旧的主题图片副本，避免无用文件残留。")
@@ -992,6 +1451,9 @@ private struct EditSavedThemeSheet: View {
                         name,
                         NSColor(themeColor).themeHexString,
                         NSColor(sidebarThemeColor).themeHexString,
+                        cropX,
+                        cropY,
+                        cropZoom,
                         selectedImageURL,
                         removeBackgroundImage
                     )

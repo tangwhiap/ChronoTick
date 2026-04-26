@@ -242,6 +242,9 @@ final class AppThemeSettings {
     var themeHex: String
     var sidebarThemeHex: String
     var backgroundImagePath: String?
+    var backgroundCropX: Double?
+    var backgroundCropY: Double?
+    var backgroundCropZoom: Double?
     var createdAt: Date
     var updatedAt: Date
 
@@ -250,6 +253,9 @@ final class AppThemeSettings {
         themeHex: String = AppThemeSettings.defaultThemeHex,
         sidebarThemeHex: String = AppThemeSettings.defaultSidebarThemeHex,
         backgroundImagePath: String? = nil,
+        backgroundCropX: Double? = nil,
+        backgroundCropY: Double? = nil,
+        backgroundCropZoom: Double? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -257,6 +263,9 @@ final class AppThemeSettings {
         self.themeHex = themeHex
         self.sidebarThemeHex = sidebarThemeHex
         self.backgroundImagePath = backgroundImagePath
+        self.backgroundCropX = backgroundCropX
+        self.backgroundCropY = backgroundCropY
+        self.backgroundCropZoom = backgroundCropZoom
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -273,6 +282,9 @@ final class SavedThemePreset {
     var themeHex: String
     var sidebarThemeHex: String
     var backgroundImagePath: String?
+    var backgroundCropX: Double?
+    var backgroundCropY: Double?
+    var backgroundCropZoom: Double?
     var createdAt: Date
     var updatedAt: Date
 
@@ -282,6 +294,9 @@ final class SavedThemePreset {
         themeHex: String,
         sidebarThemeHex: String,
         backgroundImagePath: String? = nil,
+        backgroundCropX: Double? = nil,
+        backgroundCropY: Double? = nil,
+        backgroundCropZoom: Double? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -290,6 +305,9 @@ final class SavedThemePreset {
         self.themeHex = themeHex
         self.sidebarThemeHex = sidebarThemeHex
         self.backgroundImagePath = backgroundImagePath
+        self.backgroundCropX = backgroundCropX
+        self.backgroundCropY = backgroundCropY
+        self.backgroundCropZoom = backgroundCropZoom
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -343,12 +361,18 @@ enum ThemeAssetService {
     static func applyBackgroundImage(from sourceURL: URL, to settings: AppThemeSettings) throws {
         let destination = try persistImage(from: sourceURL, filenamePrefix: backgroundFilename)
         settings.backgroundImagePath = destination.path
+        settings.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
+        settings.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
+        settings.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
         settings.touch()
     }
 
     static func clearBackgroundImage(for settings: AppThemeSettings) {
         deleteCopiedImage(atPath: settings.backgroundImagePath)
         settings.backgroundImagePath = nil
+        settings.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
+        settings.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
+        settings.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
         settings.touch()
     }
 
@@ -364,7 +388,10 @@ enum ThemeAssetService {
         let theme = SavedThemePreset(
             name: trimmedName,
             themeHex: settings.themeHex,
-            sidebarThemeHex: settings.sidebarThemeHex
+            sidebarThemeHex: settings.sidebarThemeHex,
+            backgroundCropX: settings.normalizedBackgroundCropX,
+            backgroundCropY: settings.normalizedBackgroundCropY,
+            backgroundCropZoom: settings.normalizedBackgroundCropZoom
         )
 
         if let sourcePath = settings.backgroundImagePath {
@@ -380,6 +407,9 @@ enum ThemeAssetService {
     static func applySavedTheme(_ preset: SavedThemePreset, to settings: AppThemeSettings) throws {
         settings.themeHex = preset.themeHex
         settings.sidebarThemeHex = preset.sidebarThemeHex
+        settings.backgroundCropX = preset.normalizedBackgroundCropX
+        settings.backgroundCropY = preset.normalizedBackgroundCropY
+        settings.backgroundCropZoom = preset.normalizedBackgroundCropZoom
 
         if let sourcePath = preset.backgroundImagePath {
             let sourceURL = URL(fileURLWithPath: sourcePath)
@@ -397,6 +427,9 @@ enum ThemeAssetService {
         name rawName: String,
         themeHex: String,
         sidebarThemeHex: String,
+        cropX: Double,
+        cropY: Double,
+        cropZoom: Double,
         selectedImageURL: URL?,
         removeBackgroundImage: Bool,
         in context: ModelContext
@@ -412,10 +445,16 @@ enum ThemeAssetService {
         preset.name = trimmedName
         preset.themeHex = themeHex
         preset.sidebarThemeHex = sidebarThemeHex
+        preset.backgroundCropX = cropX.clamped(to: 0...1)
+        preset.backgroundCropY = cropY.clamped(to: 0...1)
+        preset.backgroundCropZoom = cropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
 
         if removeBackgroundImage {
             deleteCopiedImage(atPath: preset.backgroundImagePath)
             preset.backgroundImagePath = nil
+            preset.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
+            preset.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
+            preset.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
         } else if let selectedImageURL {
             let destination = try persistImage(from: selectedImageURL, filenamePrefix: savedThemeAssetPrefix(for: preset.id))
             if destination.path != preset.backgroundImagePath {
@@ -479,6 +518,11 @@ enum ThemeAssetService {
 extension AppThemeSettings {
     static let defaultThemeHex = "#0A84FF"
     static let defaultSidebarThemeHex = "#F4F4F6"
+    static let defaultBackgroundCropX = 0.5
+    static let defaultBackgroundCropY = 0.5
+    static let defaultBackgroundCropZoom = 1.0
+    static let minimumBackgroundCropZoom = 1.0
+    static let maximumBackgroundCropZoom = 4.0
 
     var themeColor: Color {
         Color(nsColor: nsThemeColor)
@@ -502,6 +546,18 @@ extension AppThemeSettings {
         guard let backgroundImagePath, !backgroundImagePath.isEmpty else { return nil }
         return URL(fileURLWithPath: backgroundImagePath)
     }
+
+    var normalizedBackgroundCropX: Double {
+        (backgroundCropX ?? Self.defaultBackgroundCropX).clamped(to: 0...1)
+    }
+
+    var normalizedBackgroundCropY: Double {
+        (backgroundCropY ?? Self.defaultBackgroundCropY).clamped(to: 0...1)
+    }
+
+    var normalizedBackgroundCropZoom: Double {
+        (backgroundCropZoom ?? Self.defaultBackgroundCropZoom).clamped(to: Self.minimumBackgroundCropZoom...Self.maximumBackgroundCropZoom)
+    }
 }
 
 extension SavedThemePreset {
@@ -524,6 +580,24 @@ extension SavedThemePreset {
     var backgroundImageURL: URL? {
         guard let backgroundImagePath, !backgroundImagePath.isEmpty else { return nil }
         return URL(fileURLWithPath: backgroundImagePath)
+    }
+
+    var normalizedBackgroundCropX: Double {
+        (backgroundCropX ?? AppThemeSettings.defaultBackgroundCropX).clamped(to: 0...1)
+    }
+
+    var normalizedBackgroundCropY: Double {
+        (backgroundCropY ?? AppThemeSettings.defaultBackgroundCropY).clamped(to: 0...1)
+    }
+
+    var normalizedBackgroundCropZoom: Double {
+        (backgroundCropZoom ?? AppThemeSettings.defaultBackgroundCropZoom).clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
+    }
+}
+
+extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 
