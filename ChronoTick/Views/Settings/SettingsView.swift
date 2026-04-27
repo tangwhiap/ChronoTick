@@ -18,6 +18,8 @@ private enum SettingsImportKind: Identifiable {
     }
 }
 
+private let chronoTickThemePackageType = UTType(exportedAs: "com.example.chronotick.theme")
+
 struct SettingsView: View {
 
     @Environment(\.modelContext) private var modelContext
@@ -39,6 +41,7 @@ struct SettingsView: View {
     @State private var isPresentingSaveTheme = false
     @State private var editingSavedTheme: SavedThemePreset?
     @State private var pendingDeleteSavedTheme: SavedThemePreset?
+    @State private var pendingImportedThemePackage: ImportedThemePackage?
     @State private var authorizationStatusText = "读取中..."
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
 
@@ -142,6 +145,19 @@ struct SettingsView: View {
                 }
             } onCancel: {
                 editingSavedTheme = nil
+            }
+        }
+        .sheet(item: $pendingImportedThemePackage) { themePackage in
+            RenameImportedThemeSheet(initialName: uniqueThemeName(suggestedName: themePackage.name)) { newName in
+                do {
+                    try ThemeAssetService.importThemePackage(themePackage, named: newName, in: modelContext)
+                    pendingImportedThemePackage = nil
+                    message = "主题导入完成。"
+                } catch {
+                    message = error.localizedDescription
+                }
+            } onCancel: {
+                pendingImportedThemePackage = nil
             }
         }
         .confirmationDialog(
@@ -323,8 +339,14 @@ struct SettingsView: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("已保存主题")
-                            .font(.headline)
+                        HStack {
+                            Text("已保存主题")
+                                .font(.headline)
+                            Spacer()
+                            Button("导入主题") {
+                                startThemeImport()
+                            }
+                        }
 
                         if savedThemes.isEmpty {
                             Text("还没有保存任何主题。可以先配置自定义主题，再点击“保存主题”。")
@@ -345,6 +367,9 @@ struct SettingsView: View {
                                         },
                                         onEdit: {
                                             editingSavedTheme = preset
+                                        },
+                                        onExport: {
+                                            startThemeExport(preset)
                                         },
                                         onDelete: {
                                             pendingDeleteSavedTheme = preset
@@ -739,6 +764,74 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.image]
         return panel.runModal() == .OK ? panel.url : nil
     }
+
+    private func startThemeExport(_ preset: SavedThemePreset) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(safeThemePackageFilename(for: preset.name)).\(ThemeAssetService.exportedThemePackageExtension)"
+        panel.allowedContentTypes = [chronoTickThemePackageType]
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+        let packageURL = destinationURL.pathExtension.lowercased() == ThemeAssetService.exportedThemePackageExtension
+            ? destinationURL
+            : destinationURL.appendingPathExtension(ThemeAssetService.exportedThemePackageExtension)
+
+        do {
+            try ThemeAssetService.exportSavedTheme(preset, to: packageURL)
+            message = "主题已导出。"
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func startThemeImport() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [chronoTickThemePackageType]
+        panel.prompt = "导入"
+        panel.message = "请选择 .\(ThemeAssetService.exportedThemePackageExtension) 主题包。"
+
+        guard panel.runModal() == .OK, let packageURL = panel.url else { return }
+
+        do {
+            let themePackage = try ThemeAssetService.readThemePackage(from: packageURL)
+            if themeNameExists(themePackage.name) {
+                pendingImportedThemePackage = themePackage
+            } else {
+                try ThemeAssetService.importThemePackage(themePackage, named: themePackage.name, in: modelContext)
+                message = "主题导入完成。"
+            }
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func themeNameExists(_ name: String) -> Bool {
+        savedThemes.contains { $0.name.caseInsensitiveCompare(name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }
+    }
+
+    private func uniqueThemeName(suggestedName: String) -> String {
+        let baseName = suggestedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "导入主题" : suggestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard themeNameExists(baseName) else { return baseName }
+
+        var index = 2
+        while themeNameExists("\(baseName) \(index)") {
+            index += 1
+        }
+        return "\(baseName) \(index)"
+    }
+
+    private func safeThemePackageFilename(for name: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
+        let cleaned = name
+            .components(separatedBy: invalidCharacters)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "ChronoTick Theme" : cleaned
+    }
 }
 
 private struct ThemePreviewSwatch: View {
@@ -806,6 +899,7 @@ private struct SavedThemeCard: View {
     let theme: SavedThemePreset
     let onApply: () -> Void
     let onEdit: () -> Void
+    let onExport: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -834,6 +928,7 @@ private struct SavedThemeCard: View {
             HStack {
                 Button("使用", action: onApply)
                 Button("编辑", action: onEdit)
+                Button("导出", action: onExport)
                 Button("删除", role: .destructive, action: onDelete)
             }
             .buttonStyle(.borderless)
@@ -843,6 +938,47 @@ private struct SavedThemeCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.secondary.opacity(0.06))
         )
+    }
+}
+
+private struct RenameImportedThemeSheet: View {
+    let initialName: String
+    let onConfirm: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+
+    init(initialName: String, onConfirm: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.initialName = initialName
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+        _name = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("重命名导入主题")
+                .font(.title3.bold())
+
+            Text("导入的主题名称已存在。请输入一个新的主题名称，或取消导入。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextField("主题名称", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Spacer()
+                Button("取消导入", action: onCancel)
+                Button("导入") {
+                    onConfirm(name.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
     }
 }
 

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "Twilight Focus",
+  "themeHex": "#2F6F73",
+  "sidebarThemeHex": "#F0E7D6",
+  "backgroundCropX": 0.5,
+  "backgroundCropY": 0.5,
+  "backgroundCropZoom": 1.0,
+  "backgroundImageFilename": "background.png"
+}

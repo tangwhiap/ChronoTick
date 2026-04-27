@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.JPG",
+  "name" : "Key west",
+  "sidebarThemeHex" : "#FFF9E9",
+  "themeHex" : "#8FA4FF",
+  "version" : 1
+}

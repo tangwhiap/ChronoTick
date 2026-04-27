@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.JPG",
+  "name" : "门多塔湖（冰雪）",
+  "sidebarThemeHex" : "#F1EFDB",
+  "themeHex" : "#FF9F38",
+  "version" : 1
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "Morning Clarity",
+  "themeHex": "#6E92A3",
+  "sidebarThemeHex": "#EEF3F0",
+  "backgroundCropX": 0.5,
+  "backgroundCropY": 0.5,
+  "backgroundCropZoom": 1.0,
+  "backgroundImageFilename": "background.png"
+}

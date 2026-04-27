@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.JPG",
+  "name" : "迈阿密海滩🏖️",
+  "sidebarThemeHex" : "#FFF8E4",
+  "themeHex" : "#7D8EFF",
+  "version" : 1
+}

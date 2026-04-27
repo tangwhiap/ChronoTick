@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.JPG",
+  "name" : "惬意时光",
+  "sidebarThemeHex" : "#B1E3FF",
+  "themeHex" : "#597FFF",
+  "version" : 1
+}

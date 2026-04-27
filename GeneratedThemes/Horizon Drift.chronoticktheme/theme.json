@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "Horizon Drift",
+  "themeHex": "#7D9EDB",
+  "sidebarThemeHex": "#F6EEE8",
+  "backgroundCropX": 0.5,
+  "backgroundCropY": 0.5,
+  "backgroundCropZoom": 1.0,
+  "backgroundImageFilename": "background.png"
+}

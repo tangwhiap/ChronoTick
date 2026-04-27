@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.JPG",
+  "name" : "猫猫~",
+  "sidebarThemeHex" : "#EAE5E0",
+  "themeHex" : "#FFC76A",
+  "version" : 1
+}

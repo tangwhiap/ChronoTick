@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.JPG",
+  "name" : "夏日度假村",
+  "sidebarThemeHex" : "#F4F4F6",
+  "themeHex" : "#0A84FF",
+  "version" : 1
+}

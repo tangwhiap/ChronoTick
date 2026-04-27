@@ -345,6 +345,8 @@ extension ProjectTask {
 enum ThemeAssetService {
     private static let backgroundFilename = "theme-background"
     private static let savedThemeFilenamePrefix = "saved-theme"
+    static let exportedThemePackageExtension = "chronoticktheme"
+    private static let exportedThemeMetadataFilename = "theme.json"
 
     static func ensureThemeSettings(in context: ModelContext) -> AppThemeSettings {
         let descriptor = FetchDescriptor<AppThemeSettings>(sortBy: [SortDescriptor(\.createdAt)])
@@ -473,6 +475,117 @@ enum ThemeAssetService {
         try context.save()
     }
 
+    static func exportSavedTheme(_ preset: SavedThemePreset, to packageURL: URL) throws {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: packageURL.path) {
+            try fileManager.removeItem(at: packageURL)
+        }
+        try fileManager.createDirectory(at: packageURL, withIntermediateDirectories: true)
+
+        let imageFilename: String?
+        if let backgroundImagePath = preset.backgroundImagePath, !backgroundImagePath.isEmpty {
+            let sourceURL = URL(fileURLWithPath: backgroundImagePath)
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                throw ThemePackageError.missingBackgroundImage
+            }
+            let ext = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension
+            let exportedImageFilename = "background.\(ext)"
+            try fileManager.copyItem(at: sourceURL, to: packageURL.appendingPathComponent(exportedImageFilename))
+            imageFilename = exportedImageFilename
+        } else {
+            imageFilename = nil
+        }
+
+        let payload = ExportedThemePackagePayload(
+            version: 1,
+            name: preset.name,
+            themeHex: preset.themeHex,
+            sidebarThemeHex: preset.sidebarThemeHex,
+            backgroundCropX: preset.normalizedBackgroundCropX,
+            backgroundCropY: preset.normalizedBackgroundCropY,
+            backgroundCropZoom: preset.normalizedBackgroundCropZoom,
+            backgroundImageFilename: imageFilename
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(payload)
+        try data.write(to: packageURL.appendingPathComponent(exportedThemeMetadataFilename), options: .atomic)
+    }
+
+    static func readThemePackage(from packageURL: URL) throws -> ImportedThemePackage {
+        guard packageURL.pathExtension.lowercased() == exportedThemePackageExtension else {
+            throw ThemePackageError.invalidPackage
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: packageURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw ThemePackageError.invalidPackage
+        }
+
+        let metadataURL = packageURL.appendingPathComponent(exportedThemeMetadataFilename)
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else {
+            throw ThemePackageError.missingMetadata
+        }
+
+        let payload = try JSONDecoder().decode(ExportedThemePackagePayload.self, from: Data(contentsOf: metadataURL))
+        guard payload.version == 1,
+              !payload.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              NSColor(themeHex: payload.themeHex) != nil,
+              NSColor(themeHex: payload.sidebarThemeHex) != nil
+        else {
+            throw ThemePackageError.unsupportedMetadata
+        }
+
+        let imageURL: URL?
+        if let filename = payload.backgroundImageFilename, !filename.isEmpty {
+            let candidate = packageURL.appendingPathComponent(filename)
+            guard FileManager.default.fileExists(atPath: candidate.path) else {
+                throw ThemePackageError.missingBackgroundImage
+            }
+            imageURL = candidate
+        } else {
+            imageURL = nil
+        }
+
+        return ImportedThemePackage(
+            name: payload.name,
+            themeHex: payload.themeHex,
+            sidebarThemeHex: payload.sidebarThemeHex,
+            backgroundCropX: payload.backgroundCropX.clamped(to: 0...1),
+            backgroundCropY: payload.backgroundCropY.clamped(to: 0...1),
+            backgroundCropZoom: payload.backgroundCropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom),
+            backgroundImageURL: imageURL
+        )
+    }
+
+    static func importThemePackage(_ package: ImportedThemePackage, named rawName: String, in context: ModelContext) throws {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { throw ThemePresetError.emptyName }
+
+        let descriptor = FetchDescriptor<SavedThemePreset>(sortBy: [SortDescriptor(\.createdAt)])
+        let existingThemes = (try? context.fetch(descriptor)) ?? []
+        guard !existingThemes.contains(where: { $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame }) else {
+            throw ThemePresetError.duplicateName
+        }
+
+        let preset = SavedThemePreset(
+            name: trimmedName,
+            themeHex: package.themeHex,
+            sidebarThemeHex: package.sidebarThemeHex,
+            backgroundCropX: package.backgroundCropX,
+            backgroundCropY: package.backgroundCropY,
+            backgroundCropZoom: package.backgroundCropZoom
+        )
+
+        if let backgroundImageURL = package.backgroundImageURL {
+            let destination = try persistImage(from: backgroundImageURL, filenamePrefix: savedThemeAssetPrefix(for: preset.id))
+            preset.backgroundImagePath = destination.path
+        }
+
+        context.insert(preset)
+        try context.save()
+    }
+
     /// Persists a copy of the selected image under a fresh filename every time.
     ///
     /// Using a new path for each update avoids stale UI previews caused by view/image caching when
@@ -513,6 +626,28 @@ enum ThemeAssetService {
         try FileManager.default.createDirectory(at: themeDirectory, withIntermediateDirectories: true)
         return themeDirectory
     }
+}
+
+struct ImportedThemePackage: Identifiable {
+    let id = UUID()
+    let name: String
+    let themeHex: String
+    let sidebarThemeHex: String
+    let backgroundCropX: Double
+    let backgroundCropY: Double
+    let backgroundCropZoom: Double
+    let backgroundImageURL: URL?
+}
+
+private struct ExportedThemePackagePayload: Codable {
+    let version: Int
+    let name: String
+    let themeHex: String
+    let sidebarThemeHex: String
+    let backgroundCropX: Double
+    let backgroundCropY: Double
+    let backgroundCropZoom: Double
+    let backgroundImageFilename: String?
 }
 
 extension AppThemeSettings {
@@ -611,6 +746,26 @@ enum ThemePresetError: LocalizedError {
             return "主题名称不能为空。"
         case .duplicateName:
             return "主题名称不能与现有主题重复。"
+        }
+    }
+}
+
+enum ThemePackageError: LocalizedError {
+    case invalidPackage
+    case missingMetadata
+    case unsupportedMetadata
+    case missingBackgroundImage
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidPackage:
+            return "请选择有效的 ChronoTick 主题包。"
+        case .missingMetadata:
+            return "主题包缺少 theme.json。"
+        case .unsupportedMetadata:
+            return "主题包格式不受支持或内容不完整。"
+        case .missingBackgroundImage:
+            return "主题包中的背景图片缺失。"
         }
     }
 }

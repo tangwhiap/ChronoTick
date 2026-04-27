@@ -1,0 +1,10 @@
+{
+  "backgroundCropX" : 0.5,
+  "backgroundCropY" : 0.5,
+  "backgroundCropZoom" : 1,
+  "backgroundImageFilename" : "background.jpeg",
+  "name" : "玉米地🌽",
+  "sidebarThemeHex" : "#FFF09B",
+  "themeHex" : "#FF8C40",
+  "version" : 1
+}
