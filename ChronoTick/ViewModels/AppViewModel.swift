@@ -238,6 +238,19 @@ final class AppViewModel: ObservableObject {
         TaskMutationCoordinator.deleteTasks(on: owningDate, from: tasks, modelContext: modelContext)
     }
 
+    func changeDailyChecklistDate(from sourceDate: Date, to targetDate: Date, modelContext: ModelContext) throws {
+        let newDate = try TaskMutationCoordinator.changeDailyChecklistDate(
+            from: sourceDate,
+            to: targetDate,
+            modelContext: modelContext
+        )
+
+        if selectedSection == .dayList,
+           Calendar.current.isDate(selectedDate, inSameDayAs: sourceDate) {
+            selectedDate = newDate
+        }
+    }
+
     func toggleCompletion(for task: TaskItem, modelContext: ModelContext) {
         Task {
             await TaskMutationCoordinator.toggleTaskCompletion(task, modelContext: modelContext)
@@ -303,6 +316,20 @@ final class AppViewModel: ObservableObject {
 /// update when the mutation rules evolve.
 @MainActor
 enum TaskMutationCoordinator {
+    enum DailyChecklistDateChangeError: LocalizedError, Equatable {
+        case sourceDateHasNoTasks
+        case targetDateAlreadyExists
+
+        var errorDescription: String? {
+            switch self {
+            case .sourceDateHasNoTasks:
+                return "原日期没有可移动的每日清单。"
+            case .targetDateAlreadyExists:
+                return "目标日期已经存在每日清单，请选择其他日期。"
+            }
+        }
+    }
+
     static func createTask(
         title: String,
         owningDate: Date,
@@ -324,6 +351,40 @@ enum TaskMutationCoordinator {
         synchronizeDailyCompletionHabit(for: [owningDate], in: modelContext)
         await NotificationScheduler.shared.ensureNotificationState(for: task, in: modelContext)
         return task
+    }
+
+    @discardableResult
+    static func changeDailyChecklistDate(
+        from sourceDate: Date,
+        to targetDate: Date,
+        modelContext: ModelContext
+    ) throws -> Date {
+        let calendar = Calendar.current
+        let sourceDay = calendar.startOfDay(for: sourceDate)
+        let targetDay = calendar.startOfDay(for: targetDate)
+
+        if calendar.isDate(sourceDay, inSameDayAs: targetDay) {
+            return sourceDay
+        }
+
+        let sourceTasks = try tasks(inSameDayAs: sourceDay, in: modelContext)
+        guard !sourceTasks.isEmpty else {
+            throw DailyChecklistDateChangeError.sourceDateHasNoTasks
+        }
+
+        let targetTasks = try tasks(inSameDayAs: targetDay, in: modelContext)
+        guard targetTasks.isEmpty else {
+            throw DailyChecklistDateChangeError.targetDateAlreadyExists
+        }
+
+        for task in sourceTasks {
+            task.date = targetDay
+            task.touch()
+        }
+
+        try modelContext.save()
+        synchronizeDailyCompletionHabit(for: [sourceDay, targetDay], in: modelContext)
+        return targetDay
     }
 
     static func saveTaskDraft(
@@ -507,6 +568,13 @@ enum TaskMutationCoordinator {
     private static func synchronizeDailyCompletionHabit(for dates: [Date], in modelContext: ModelContext) {
         guard !dates.isEmpty else { return }
         SystemHabitService.synchronizeDailyCompletionHabit(for: dates, in: modelContext)
+    }
+
+    private static func tasks(inSameDayAs owningDate: Date, in modelContext: ModelContext) throws -> [TaskItem] {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: owningDate)
+        let allTasks = try modelContext.fetch(FetchDescriptor<TaskItem>(sortBy: [SortDescriptor(\.createdAt)]))
+        return allTasks.filter { calendar.isDate($0.date, inSameDayAs: day) }
     }
 
     private static func snap(_ minutes: Int, to step: Int) -> Int {

@@ -123,6 +123,10 @@ Checklist interactions route through the shared mutation pipeline:
 The task editor shows both the owning checklist date and the actual scheduled date/time. Editing
 actual time does not reassign checklist ownership.
 
+Daily checklist dates can be edited from the sidebar. Reassigning a checklist moves the owning
+date of every task in that checklist while leaving each task's actual scheduled date/time unchanged.
+The app rejects the edit when the target owning date already has a checklist.
+
 ## Habit Tracking
 
 Habit tracking includes:
@@ -385,7 +389,6 @@ Scheme ChronoTick is not currently configured for the test action.
 
 - No cloud sync, account system, recurring tasks, or multi-device sync.
 - Week timeline overlap handling is functional but can still be made smarter.
-- Daily checklist ownership is intentionally stable; there is no dedicated "move to another checklist" feature yet.
 - Tests are present, but the Xcode scheme needs a configured test action before `xcodebuild test` can run.
 
 ## Future Extension Ideas

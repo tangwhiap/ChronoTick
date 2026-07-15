@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -113,26 +114,28 @@ private struct SidebarView: View {
     @State private var isDayListExpanded = true
     @State private var isProjectListsExpanded = true
     @State private var pendingDeleteDate: Date?
+    @State private var editingDayListEntry: SidebarDayListEntry?
     @State private var pendingDeleteProjectTaskList: ProjectTaskList?
     @State private var renamingProjectTaskList: ProjectTaskList?
     @State private var isPresentingCreateProjectList = false
     let themeSettings: AppThemeSettings?
 
-    private var recordedDates: [Date] {
+    private var dayListEntries: [SidebarDayListEntry] {
         let calendar = Calendar.current
-        let unique = Set(tasks.map { calendar.startOfDay(for: $0.date) })
-        return unique.sorted()
-    }
+        var completionByDate: [Date: Bool] = [:]
 
-    private var completedDates: Set<Date> {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: tasks) { calendar.startOfDay(for: $0.date) }
-        return Set(
-            grouped.compactMap { date, dayTasks in
-                guard !dayTasks.isEmpty, dayTasks.allSatisfy(\.isCompleted) else { return nil }
-                return date
+        for task in tasks {
+            let date = calendar.startOfDay(for: task.date)
+            if let isCompleted = completionByDate[date] {
+                completionByDate[date] = isCompleted && task.isCompleted
+            } else {
+                completionByDate[date] = task.isCompleted
             }
-        )
+        }
+
+        return completionByDate
+            .map { SidebarDayListEntry(date: $0.key, isCompleted: $0.value) }
+            .sorted { $0.date > $1.date }
     }
 
     private var rowSelectionColor: Color {
@@ -154,38 +157,29 @@ private struct SidebarView: View {
 
             Section {
                 DisclosureGroup(isExpanded: $isDayListExpanded) {
-                    if recordedDates.isEmpty {
+                    if dayListEntries.isEmpty {
                         Text("暂无记录")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     } else {
-                        ForEach(recordedDates, id: \.self) { date in
-                            Button {
+                        SidebarDayListScroller(
+                            entries: dayListEntries,
+                            selectedDate: viewModel.selectedDate,
+                            isDayListActive: viewModel.selectedSection == .dayList,
+                            rowSelectionColor: rowSelectionColor,
+                            rowIdleColor: rowIdleColor,
+                            onSelect: { date in
                                 viewModel.selectedDate = date
                                 viewModel.selectedSection = .dayList
-                            } label: {
-                                HStack {
-                                    Text(Self.dayListFormatter.string(from: date))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                        .opacity(completedDates.contains(date) ? 1 : 0)
-                                }
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(isSelected(date: date) ? rowSelectionColor : rowIdleColor)
-                                )
+                            },
+                            onEdit: { date in
+                                editingDayListEntry = dayListEntries.first { Calendar.current.isDate($0.date, inSameDayAs: date) }
+                            },
+                            onDelete: { date in
+                                pendingDeleteDate = date
                             }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button("删除列表", role: .destructive) {
-                                    pendingDeleteDate = date
-                                }
-                            }
-                        }
+                        )
                     }
                 } label: {
                     Label("每日清单", systemImage: AppViewModel.Section.dayList.systemImage)
@@ -312,6 +306,23 @@ private struct SidebarView: View {
                 isPresentingCreateProjectList = false
             }
         }
+        .sheet(item: $editingDayListEntry) { entry in
+            EditDailyChecklistDateSheet(sourceDate: entry.date) { targetDate in
+                do {
+                    try viewModel.changeDailyChecklistDate(
+                        from: entry.date,
+                        to: targetDate,
+                        modelContext: modelContext
+                    )
+                    editingDayListEntry = nil
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            } onCancel: {
+                editingDayListEntry = nil
+            }
+        }
         .sheet(item: $renamingProjectTaskList) { list in
             RenameProjectTaskListSheet(list: list) { newName in
                 viewModel.renameProjectTaskList(list, to: newName, modelContext: modelContext)
@@ -337,10 +348,6 @@ private struct SidebarView: View {
         )
     }
 
-    private func isSelected(date: Date) -> Bool {
-        viewModel.selectedSection == .dayList && Calendar.current.isDate(viewModel.selectedDate, inSameDayAs: date)
-    }
-
     private func isSelected(projectTaskList list: ProjectTaskList) -> Bool {
         viewModel.selectedSection == .projectLists && viewModel.selectedProjectTaskListID == list.id
     }
@@ -351,6 +358,259 @@ private struct SidebarView: View {
         formatter.dateFormat = "MM/dd/yy"
         return formatter
     }()
+}
+
+private struct SidebarDayListEntry: Identifiable, Equatable {
+    let date: Date
+    let isCompleted: Bool
+
+    var id: Date { date }
+}
+
+private struct SidebarDayListScroller: View {
+    let entries: [SidebarDayListEntry]
+    let selectedDate: Date
+    let isDayListActive: Bool
+    let rowSelectionColor: Color
+    let rowIdleColor: Color
+    let onSelect: (Date) -> Void
+    let onEdit: (Date) -> Void
+    let onDelete: (Date) -> Void
+
+    private static let visibleRowLimit = 15
+    private static let rowHeight: CGFloat = 30
+    private static let rowSpacing: CGFloat = 4
+    private static let dayListFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MM/dd/yy"
+        return formatter
+    }()
+
+    private var showsScroller: Bool {
+        entries.count > Self.visibleRowLimit
+    }
+
+    private var viewportHeight: CGFloat {
+        let visibleRows = min(entries.count, Self.visibleRowLimit)
+        guard visibleRows > 0 else { return 0 }
+        return CGFloat(visibleRows) * Self.rowHeight + CGFloat(visibleRows - 1) * Self.rowSpacing
+    }
+
+    private var selectedEntryID: SidebarDayListEntry.ID? {
+        guard isDayListActive else { return nil }
+        return entries.first { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }?.id
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: showsScroller) {
+                LazyVStack(spacing: Self.rowSpacing) {
+                    ForEach(entries) { entry in
+                        SidebarDayListRow(
+                            title: Self.dayListFormatter.string(from: entry.date),
+                            isCompleted: entry.isCompleted,
+                            isSelected: isDayListActive && Calendar.current.isDate(selectedDate, inSameDayAs: entry.date),
+                            rowSelectionColor: rowSelectionColor,
+                            rowIdleColor: rowIdleColor,
+                            rowHeight: Self.rowHeight,
+                            onSelect: { onSelect(entry.date) },
+                            onEdit: { onEdit(entry.date) },
+                            onDelete: { onDelete(entry.date) }
+                        )
+                        .id(entry.id)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, showsScroller ? 4 : 0)
+            }
+            .frame(height: viewportHeight)
+            .onAppear {
+                scrollToSelectedEntry(using: proxy)
+            }
+            .onChange(of: selectedDate) { _, _ in
+                scrollToSelectedEntry(using: proxy)
+            }
+            .onChange(of: entries) { _, _ in
+                scrollToSelectedEntry(using: proxy)
+            }
+        }
+    }
+
+    private func scrollToSelectedEntry(using proxy: ScrollViewProxy) {
+        guard let selectedEntryID else { return }
+        proxy.scrollTo(selectedEntryID, anchor: .center)
+    }
+}
+
+private struct SidebarDayListRow: View {
+    let title: String
+    let isCompleted: Bool
+    let isSelected: Bool
+    let rowSelectionColor: Color
+    let rowIdleColor: Color
+    let rowHeight: CGFloat
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .opacity(isCompleted ? 1 : 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? rowSelectionColor : rowIdleColor)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .overlay {
+            SidebarDayListContextMenuOverlay(
+                onOpen: onSelect,
+                onEdit: onEdit,
+                onDelete: onDelete
+            )
+        }
+    }
+}
+
+private struct SidebarDayListContextMenuOverlay: NSViewRepresentable {
+    let onOpen: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onOpen: onOpen, onEdit: onEdit, onDelete: onDelete)
+    }
+
+    func makeNSView(context: Context) -> ContextMenuView {
+        let view = ContextMenuView()
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ nsView: ContextMenuView, context: Context) {
+        context.coordinator.onOpen = onOpen
+        context.coordinator.onEdit = onEdit
+        context.coordinator.onDelete = onDelete
+        nsView.coordinator = context.coordinator
+    }
+
+    final class Coordinator: NSObject {
+        var onOpen: () -> Void
+        var onEdit: () -> Void
+        var onDelete: () -> Void
+
+        init(onOpen: @escaping () -> Void, onEdit: @escaping () -> Void, onDelete: @escaping () -> Void) {
+            self.onOpen = onOpen
+            self.onEdit = onEdit
+            self.onDelete = onDelete
+        }
+
+        func showMenu(for event: NSEvent, in view: NSView) {
+            onOpen()
+
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem(title: "编辑所属日期", action: #selector(edit), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "删除列表", action: #selector(deleteList), keyEquivalent: ""))
+
+            for item in menu.items {
+                item.target = self
+            }
+
+            NSMenu.popUpContextMenu(menu, with: event, for: view)
+        }
+
+        @objc private func edit() {
+            onEdit()
+        }
+
+        @objc private func deleteList() {
+            onDelete()
+        }
+    }
+
+    final class ContextMenuView: NSView {
+        weak var coordinator: Coordinator?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let event = window?.currentEvent ?? NSApp.currentEvent else { return nil }
+            if event.type == .rightMouseDown ||
+                (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+                return self
+            }
+            return nil
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            coordinator?.showMenu(for: event, in: self)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                coordinator?.showMenu(for: event, in: self)
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+    }
+}
+
+private struct EditDailyChecklistDateSheet: View {
+    let sourceDate: Date
+    let onConfirm: (Date) -> String?
+    let onCancel: () -> Void
+
+    @State private var targetDate: Date
+    @State private var message: String?
+
+    init(
+        sourceDate: Date,
+        onConfirm: @escaping (Date) -> String?,
+        onCancel: @escaping () -> Void
+    ) {
+        self.sourceDate = sourceDate
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+        _targetDate = State(initialValue: Calendar.current.startOfDay(for: sourceDate))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("编辑所属日期")
+                .font(.title2.bold())
+            DatePicker("所属日期", selection: $targetDate, displayedComponents: .date)
+            HStack(spacing: 8) {
+                Spacer()
+                Button("取消", action: onCancel)
+                Button("保存") {
+                    message = onConfirm(targetDate)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
+        .alert("提示", isPresented: Binding(
+            get: { message != nil },
+            set: { isPresented in
+                if !isPresented { message = nil }
+            }
+        )) {
+            Button("确定", role: .cancel) { message = nil }
+        } message: {
+            Text(message ?? "")
+        }
+    }
 }
 
 private struct CreateProjectTaskListSheet: View {
