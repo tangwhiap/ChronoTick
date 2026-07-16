@@ -24,6 +24,8 @@ struct SettingsView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var workRestSettings: WorkRestSettingsStore
+    @EnvironmentObject private var widgetAppearancePublisher: WorkRestWidgetAppearancePublisher
     @Query(sort: [SortDescriptor(\TaskItem.createdAt)]) private var tasks: [TaskItem]
     @Query(sort: [SortDescriptor(\ProjectTask.createdAt)]) private var projectTasks: [ProjectTask]
     @Query(sort: [SortDescriptor(\Habit.createdAt)]) private var habits: [Habit]
@@ -53,6 +55,10 @@ struct SettingsView: View {
         themeSettings.first
     }
 
+    private var widgetThemeSource: WorkRestWidgetThemeSource? {
+        themePreference.map(WorkRestWidgetThemeSource.init(settings:))
+    }
+
     private var authorizationButtonTitle: String {
         authorizationStatus == .denied ? "打开系统设置" : "检查并请求权限"
     }
@@ -61,6 +67,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 themeCard
+                workRestSettingsCard
                 reminderSettingsCard
                 csvCard
                 infoSection
@@ -77,6 +84,10 @@ struct SettingsView: View {
         .onChange(of: scenePhase) { _, newValue in
             guard newValue == .active else { return }
             Task { await refreshAuthorizationStatus() }
+        }
+        .onChange(of: widgetThemeSource) { _, source in
+            guard let source else { return }
+            widgetAppearancePublisher.schedulePublish(source)
         }
         .sheet(isPresented: $isPresentingAddDailyRule) {
             AddDailyReminderRuleSheet { titlePattern, rawRule in
@@ -413,8 +424,58 @@ struct SettingsView: View {
                                 }
                             }
                         }
+
                     }
                 }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+    }
+
+    private var workRestSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("工作/休息计时")
+                .font(.title3.bold())
+
+            VStack(alignment: .leading, spacing: 14) {
+                Stepper(
+                    value: Binding(
+                        get: { workRestSettings.defaultWorkMinutes },
+                        set: { workRestSettings.setDefaultWorkMinutes($0) }
+                    ),
+                    in: WorkRestSettings.validMinuteRange
+                ) {
+                    HStack {
+                        Text("默认工作时长")
+                        Spacer()
+                        Text("\(workRestSettings.defaultWorkMinutes) 分钟")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Stepper(
+                    value: Binding(
+                        get: { workRestSettings.defaultRestMinutes },
+                        set: { workRestSettings.setDefaultRestMinutes($0) }
+                    ),
+                    in: WorkRestSettings.validMinuteRange
+                ) {
+                    HStack {
+                        Text("默认休息时长")
+                        Spacer()
+                        Text("\(workRestSettings.defaultRestMinutes) 分钟")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text("默认值只会用于之后开始的时间段任务。当前任务可在菜单栏的“工作/休息”标签中临时调整。阶段切换通知使用下方的系统通知权限。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(18)

@@ -17,6 +17,7 @@ import UserNotifications
 @MainActor
 final class NotificationScheduler: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationScheduler()
+    private static let workRestTransitionIdentifier = "work-rest-next-transition"
 
     private override init() {
         super.init()
@@ -238,6 +239,36 @@ final class NotificationScheduler: NSObject, ObservableObject, UNUserNotificatio
 
     func removeNotification(for projectTask: ProjectTask) {
         Task { await removeNotifications(withPrefix: projectTaskPrefix(for: projectTask)) }
+    }
+
+    /// Keeps exactly one pending notification for the next automatic work/rest transition.
+    /// Work/rest timing remains active when notification permission is unavailable.
+    func ensureWorkRestTransitionNotification(_ plan: WorkRestNotificationPlan?) async {
+        removeWorkRestTransitionNotification()
+        guard let plan, plan.fireDate > .now else { return }
+
+        let status = await authorizationStatus()
+        guard !Task.isCancelled,
+              status == .authorized || status == .provisional
+        else { return }
+
+        let detail = plan.nextPhase == .rest
+            ? "工作时段结束，现在休息。"
+            : "休息时段结束，现在工作。"
+
+        await addNotification(
+            identifier: Self.workRestTransitionIdentifier,
+            title: "ChronoTick 工作/休息",
+            body: plan.taskTitle,
+            detail: detail,
+            fireDate: plan.fireDate
+        )
+    }
+
+    func removeWorkRestTransitionNotification() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: [Self.workRestTransitionIdentifier]
+        )
     }
 
     private func addNotification(identifier: String, title: String, body: String, detail: String, fireDate: Date) async {

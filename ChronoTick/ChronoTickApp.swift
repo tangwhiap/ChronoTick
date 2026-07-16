@@ -1,9 +1,14 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
 @main
 struct ChronoTickApp: App {
+    @NSApplicationDelegateAdaptor(ChronoTickApplicationDelegate.self) private var applicationDelegate
     @StateObject private var viewModel = AppViewModel()
+    @StateObject private var workRestSettings: WorkRestSettingsStore
+    @StateObject private var workRestController: WorkRestTimerController
+    @StateObject private var widgetAppearancePublisher: WorkRestWidgetAppearancePublisher
     private let container: ModelContainer
 
     init() {
@@ -19,10 +24,12 @@ struct ChronoTickApp: App {
             HabitCheckIn.self
         ])
         let configuration = Self.makeConfiguration(schema: schema)
-        container = Self.makeContainer(schema: schema, configuration: configuration)
+        let container = Self.makeContainer(schema: schema, configuration: configuration)
+        self.container = container
         Self.removeOrphanedProjectTasks(in: container.mainContext)
         _ = ReminderSettingsService.ensureProjectTaskPreferences(in: container.mainContext)
-        _ = ThemeAssetService.ensureThemeSettings(in: container.mainContext)
+        let themeSettings = ThemeAssetService.ensureThemeSettings(in: container.mainContext)
+        ThemeAssetService.importBundledThemePackagesIfNeeded(in: container.mainContext)
         SystemHabitService.ensureBuiltInHabits(in: container.mainContext)
         try? SeedDataService.seedIfNeeded(in: container.mainContext)
         let existingTasks = (try? container.mainContext.fetch(FetchDescriptor<TaskItem>(sortBy: [SortDescriptor(\.date)]))) ?? []
@@ -31,12 +38,28 @@ struct ChronoTickApp: App {
         Task { @MainActor in
             await NotificationScheduler.shared.ensureNotificationStateForAllTasks(in: mainContext)
         }
+
+        let workRestSettings = WorkRestSettingsStore()
+        let workRestController = WorkRestTimerController(
+            modelContext: mainContext,
+            settingsStore: workRestSettings,
+            notificationScheduler: .shared
+        )
+        let widgetAppearancePublisher = WorkRestWidgetAppearancePublisher.system()
+        widgetAppearancePublisher.publishNow(WorkRestWidgetThemeSource(settings: themeSettings))
+        workRestController.start()
+        _workRestSettings = StateObject(wrappedValue: workRestSettings)
+        _workRestController = StateObject(wrappedValue: workRestController)
+        _widgetAppearancePublisher = StateObject(wrappedValue: widgetAppearancePublisher)
     }
 
     var body: some Scene {
         WindowGroup(id: "main") {
             RootSplitView()
                 .environmentObject(viewModel)
+                .environmentObject(workRestSettings)
+                .environmentObject(workRestController)
+                .environmentObject(widgetAppearancePublisher)
                 .modelContainer(container)
         }
         .defaultSize(width: 1340, height: 860)
@@ -47,11 +70,21 @@ struct ChronoTickApp: App {
         MenuBarExtra("ChronoTick", systemImage: "clock.badge.checkmark") {
             MenuBarPanelView()
                 .environmentObject(viewModel)
+                .environmentObject(workRestSettings)
+                .environmentObject(workRestController)
                 .modelContainer(container)
                 .frame(width: 320)
                 .padding()
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+@MainActor
+private final class ChronoTickApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        NotificationScheduler.shared.removeWorkRestTransitionNotification()
+        WorkRestWidgetPublisher.system().publishUnavailable()
     }
 }
 
@@ -68,20 +101,9 @@ private extension ChronoTickApp {
         do {
             return try ModelContainer(for: schema, configurations: [configuration])
         } catch {
-            purgeStoreArtifacts(at: configuration.url)
-            return try! ModelContainer(for: schema, configurations: [configuration])
-        }
-    }
-
-    static func purgeStoreArtifacts(at url: URL) {
-        let fileManager = FileManager.default
-        let candidates = [
-            url,
-            URL(fileURLWithPath: url.path + "-shm"),
-            URL(fileURLWithPath: url.path + "-wal")
-        ]
-        for candidate in candidates where fileManager.fileExists(atPath: candidate.path) {
-            try? fileManager.removeItem(at: candidate)
+            // Never delete an existing store in an attempt to recover automatically. A launch
+            // failure is visible and recoverable; silent deletion of user tasks is not.
+            fatalError("无法打开 ChronoTick 用户数据库，原数据已保留在 \(configuration.url.path)：\(error)")
         }
     }
 

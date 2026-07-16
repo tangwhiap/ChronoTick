@@ -35,7 +35,48 @@
 				A0000000000000000000001D /* ReminderSettingsServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000067 /* ReminderSettingsServiceTests.swift */; };
 				A00000000000000000000068 /* TaskDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000069 /* TaskDraftTests.swift */; };
 				A0000000000000000000006A /* NotificationSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006B /* NotificationSchedulerTests.swift */; };
+		B10000000000000000000001 /* WorkRestTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* WorkRestTimer.swift */; };
+		B10000000000000000000002 /* WorkRestTimerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* WorkRestTimerController.swift */; };
+		B10000000000000000000003 /* WorkRestTimerEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* WorkRestTimerEngineTests.swift */; };
+		C10000000000000000000001 /* WorkRestWidgetState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000011 /* WorkRestWidgetState.swift */; };
+		C10000000000000000000002 /* WorkRestWidgetState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000011 /* WorkRestWidgetState.swift */; };
+		C10000000000000000000003 /* ChronoTickWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000012 /* ChronoTickWidget.swift */; };
+		C10000000000000000000004 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C10000000000000000000016 /* WidgetKit.framework */; };
+		C10000000000000000000005 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C10000000000000000000017 /* SwiftUI.framework */; };
+		C10000000000000000000006 /* ChronoTickWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000015 /* ChronoTickWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		C10000000000000000000007 /* WorkRestWidgetStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000019 /* WorkRestWidgetStateTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C10000000000000000000050 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000064 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C10000000000000000000040;
+			remoteInfo = ChronoTickWidgetExtension;
+		};
+		C10000000000000000000052 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000064 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000060;
+			remoteInfo = ChronoTick;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C10000000000000000000023 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C10000000000000000000006 /* ChronoTickWidgetExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A00000000000000000000021 /* ChronoTickApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChronoTickApp.swift; sourceTree = "<group>"; };
@@ -72,11 +113,32 @@
 				A00000000000000000000067 /* ReminderSettingsServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSettingsServiceTests.swift; sourceTree = "<group>"; };
 				A00000000000000000000069 /* TaskDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDraftTests.swift; sourceTree = "<group>"; };
 				A0000000000000000000006B /* NotificationSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSchedulerTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* WorkRestTimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRestTimer.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* WorkRestTimerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRestTimerController.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* WorkRestTimerEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRestTimerEngineTests.swift; sourceTree = "<group>"; };
+		C10000000000000000000011 /* WorkRestWidgetState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRestWidgetState.swift; sourceTree = "<group>"; };
+		C10000000000000000000012 /* ChronoTickWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChronoTickWidget.swift; sourceTree = "<group>"; };
+		C10000000000000000000013 /* ChronoTickWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ChronoTickWidget.entitlements; sourceTree = "<group>"; };
+		C10000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C10000000000000000000015 /* ChronoTickWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ChronoTickWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C10000000000000000000016 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		C10000000000000000000017 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		C10000000000000000000018 /* ChronoTick.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ChronoTick.entitlements; sourceTree = "<group>"; };
+		C10000000000000000000019 /* WorkRestWidgetStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRestWidgetStateTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A00000000000000000000040 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A00000000000000000000041 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000004 /* WidgetKit.framework in Frameworks */,
+				C10000000000000000000005 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -88,6 +150,12 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000000000000000000022 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -95,7 +163,9 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000051 /* ChronoTick */,
+				C10000000000000000000030 /* ChronoTickWidget */,
 				A00000000000000000000052 /* ChronoTickTests */,
+				C10000000000000000000031 /* Frameworks */,
 				A00000000000000000000053 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -105,6 +175,7 @@
 			children = (
 				A00000000000000000000021,
 				A0000000000000000000003B /* Info.plist */,
+				C10000000000000000000018 /* ChronoTick.entitlements */,
 				A00000000000000000000054 /* Models */,
 				A00000000000000000000055 /* Utilities */,
 				A00000000000000000000066 /* Resources */,
@@ -124,7 +195,9 @@
 						A00000000000000000000067,
 						A00000000000000000000069,
 						A0000000000000000000006B,
-				);
+				B10000000000000000000013,
+				C10000000000000000000019,
+			);
 			path = ChronoTickTests;
 			sourceTree = "<group>";
 		};
@@ -133,6 +206,7 @@
 			children = (
 				A00000000000000000000038,
 				A00000000000000000000039,
+				C10000000000000000000015 /* ChronoTickWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -143,6 +217,8 @@
 				A00000000000000000000022,
 				A00000000000000000000023,
 				A00000000000000000000024,
+				B10000000000000000000011,
+				C10000000000000000000011,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -167,6 +243,7 @@
 					A0000000000000000000002B,
 					A0000000000000000000003D,
 					A0000000000000000000003F,
+				B10000000000000000000012,
 				);
 			path = Services;
 			sourceTree = "<group>";
@@ -202,6 +279,25 @@
 		A0000000000000000000005E = { isa = PBXGroup; children = (A00000000000000000000033, ); path = Settings; sourceTree = "<group>"; };
 		A0000000000000000000005F = { isa = PBXGroup; children = (A00000000000000000000034, ); path = MenuBar; sourceTree = "<group>"; };
 		A00000000000000000000066 = { isa = PBXGroup; children = (A0000000000000000000003A, ); path = Resources; sourceTree = "<group>"; };
+		C10000000000000000000030 /* ChronoTickWidget */ = {
+			isa = PBXGroup;
+			children = (
+				C10000000000000000000012 /* ChronoTickWidget.swift */,
+				C10000000000000000000013 /* ChronoTickWidget.entitlements */,
+				C10000000000000000000014 /* Info.plist */,
+			);
+			path = ChronoTickWidget;
+			sourceTree = "<group>";
+		};
+		C10000000000000000000031 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				C10000000000000000000016 /* WidgetKit.framework */,
+				C10000000000000000000017 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -212,9 +308,12 @@
 				A00000000000000000000061 /* Sources */,
 				A00000000000000000000040 /* Frameworks */,
 				A00000000000000000000042 /* Resources */,
+				C10000000000000000000023 /* Embed App Extensions */,
 			);
 			buildRules = ();
-			dependencies = ();
+			dependencies = (
+				C10000000000000000000051 /* PBXTargetDependency */,
+			);
 			name = ChronoTick;
 			productName = ChronoTick;
 			productReference = A00000000000000000000038 /* ChronoTick.app */;
@@ -228,11 +327,28 @@
 				A00000000000000000000041 /* Frameworks */,
 			);
 			buildRules = ();
-			dependencies = ();
+			dependencies = (
+				C10000000000000000000053 /* PBXTargetDependency */,
+			);
 			name = ChronoTickTests;
 			productName = ChronoTickTests;
 			productReference = A00000000000000000000039 /* ChronoTickTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		C10000000000000000000040 /* ChronoTickWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C10000000000000000000041 /* Build configuration list for PBXNativeTarget "ChronoTickWidgetExtension" */;
+			buildPhases = (
+				C10000000000000000000020 /* Sources */,
+				C10000000000000000000021 /* Frameworks */,
+				C10000000000000000000022 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = ChronoTickWidgetExtension;
+			productName = ChronoTickWidgetExtension;
+			productReference = C10000000000000000000015 /* ChronoTickWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -245,6 +361,7 @@
 				TargetAttributes = {
 					A00000000000000000000060 = { CreatedOnToolsVersion = 16.0; };
 					A00000000000000000000062 = { CreatedOnToolsVersion = 16.0; TestTargetID = A00000000000000000000060; };
+					C10000000000000000000040 = { CreatedOnToolsVersion = 26.5; };
 				};
 			};
 			buildConfigurationList = A00000000000000000000072 /* Build configuration list for PBXProject "ChronoTick" */;
@@ -259,6 +376,7 @@
 			targets = (
 				A00000000000000000000060,
 				A00000000000000000000062,
+				C10000000000000000000040,
 			);
 		};
 /* End PBXProject section */
@@ -292,6 +410,9 @@
 				A00000000000000000000012,
 				A00000000000000000000013,
 				A00000000000000000000014,
+				B10000000000000000000001,
+				B10000000000000000000002,
+				C10000000000000000000001,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -305,18 +426,45 @@
 							A0000000000000000000001D,
 							A00000000000000000000068,
 							A0000000000000000000006A,
+				B10000000000000000000003,
+				C10000000000000000000007,
 						);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000000000000000000020 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000002 /* WorkRestWidgetState.swift in Sources */,
+				C10000000000000000000003 /* ChronoTickWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C10000000000000000000051 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C10000000000000000000040 /* ChronoTickWidgetExtension */;
+			targetProxy = C10000000000000000000050 /* PBXContainerItemProxy */;
+		};
+		C10000000000000000000053 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000060 /* ChronoTick */;
+			targetProxy = C10000000000000000000052 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A00000000000000000000080 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_ENTITLEMENTS = ChronoTick/ChronoTick.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F75T6BTGK3;
+				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ChronoTick/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -333,8 +481,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_ENTITLEMENTS = ChronoTick/ChronoTick.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F75T6BTGK3;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ChronoTick/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -352,6 +502,7 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = F75T6BTGK3;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.ChronoTickTests;
@@ -369,6 +520,7 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = F75T6BTGK3;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.ChronoTickTests;
@@ -376,6 +528,59 @@
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChronoTick.app/Contents/MacOS/ChronoTick";
+			};
+			name = Release;
+		};
+		C10000000000000000000042 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ChronoTickWidget/ChronoTickWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F75T6BTGK3;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ChronoTickWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.ChronoTick.WorkRestWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C10000000000000000000043 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ChronoTickWidget/ChronoTickWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F75T6BTGK3;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ChronoTickWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.ChronoTick.WorkRestWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -419,6 +624,15 @@
 			buildConfigurations = (
 				A00000000000000000000084,
 				A00000000000000000000085,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C10000000000000000000041 /* Build configuration list for PBXNativeTarget "ChronoTickWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C10000000000000000000042 /* Debug */,
+				C10000000000000000000043 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
