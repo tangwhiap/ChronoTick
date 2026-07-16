@@ -245,6 +245,8 @@ final class AppThemeSettings {
     var backgroundCropX: Double?
     var backgroundCropY: Double?
     var backgroundCropZoom: Double?
+    var backgroundFogOpacity: Double?
+    var taskDisplayTextColorRawValue: String?
     var createdAt: Date
     var updatedAt: Date
 
@@ -256,6 +258,8 @@ final class AppThemeSettings {
         backgroundCropX: Double? = nil,
         backgroundCropY: Double? = nil,
         backgroundCropZoom: Double? = nil,
+        backgroundFogOpacity: Double? = nil,
+        taskDisplayTextColorRawValue: String? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -266,6 +270,8 @@ final class AppThemeSettings {
         self.backgroundCropX = backgroundCropX
         self.backgroundCropY = backgroundCropY
         self.backgroundCropZoom = backgroundCropZoom
+        self.backgroundFogOpacity = backgroundFogOpacity
+        self.taskDisplayTextColorRawValue = taskDisplayTextColorRawValue
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -285,6 +291,8 @@ final class SavedThemePreset {
     var backgroundCropX: Double?
     var backgroundCropY: Double?
     var backgroundCropZoom: Double?
+    var backgroundFogOpacity: Double?
+    var taskDisplayTextColorRawValue: String?
     var createdAt: Date
     var updatedAt: Date
 
@@ -297,6 +305,8 @@ final class SavedThemePreset {
         backgroundCropX: Double? = nil,
         backgroundCropY: Double? = nil,
         backgroundCropZoom: Double? = nil,
+        backgroundFogOpacity: Double? = nil,
+        taskDisplayTextColorRawValue: String? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -308,6 +318,8 @@ final class SavedThemePreset {
         self.backgroundCropX = backgroundCropX
         self.backgroundCropY = backgroundCropY
         self.backgroundCropZoom = backgroundCropZoom
+        self.backgroundFogOpacity = backgroundFogOpacity
+        self.taskDisplayTextColorRawValue = taskDisplayTextColorRawValue
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -345,6 +357,8 @@ extension ProjectTask {
 enum ThemeAssetService {
     private static let backgroundFilename = "theme-background"
     private static let savedThemeFilenamePrefix = "saved-theme"
+    private static let bundledThemesDirectoryName = "BundledThemes"
+    private static let bundledThemeImportDefaultsKey = "ChronoTick.importedBundledThemePackageNames"
     static let exportedThemePackageExtension = "chronoticktheme"
     private static let exportedThemeMetadataFilename = "theme.json"
 
@@ -360,12 +374,45 @@ enum ThemeAssetService {
         return settings
     }
 
+    static func importBundledThemePackagesIfNeeded(
+        in context: ModelContext,
+        bundle: Bundle = .main,
+        defaults: UserDefaults = .standard
+    ) {
+        let packageURLs = bundledThemePackageURLs(in: bundle)
+        guard !packageURLs.isEmpty else { return }
+
+        var importedPackageNames = Set(defaults.stringArray(forKey: bundledThemeImportDefaultsKey) ?? [])
+        var didUpdateImportedPackages = false
+
+        for packageURL in packageURLs {
+            let packageName = packageURL.lastPathComponent
+            guard !importedPackageNames.contains(packageName) else { continue }
+
+            do {
+                let package = try readThemePackage(from: packageURL)
+                if !savedThemeExists(named: package.name, in: context) {
+                    try importThemePackage(package, named: package.name, in: context)
+                }
+                importedPackageNames.insert(packageName)
+                didUpdateImportedPackages = true
+            } catch {
+                continue
+            }
+        }
+
+        if didUpdateImportedPackages {
+            defaults.set(importedPackageNames.sorted(), forKey: bundledThemeImportDefaultsKey)
+        }
+    }
+
     static func applyBackgroundImage(from sourceURL: URL, to settings: AppThemeSettings) throws {
         let destination = try persistImage(from: sourceURL, filenamePrefix: backgroundFilename)
         settings.backgroundImagePath = destination.path
         settings.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
         settings.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
         settings.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
+        settings.backgroundFogOpacity = AppThemeSettings.defaultBackgroundFogOpacity
         settings.touch()
     }
 
@@ -375,6 +422,7 @@ enum ThemeAssetService {
         settings.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
         settings.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
         settings.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
+        settings.backgroundFogOpacity = AppThemeSettings.defaultBackgroundFogOpacity
         settings.touch()
     }
 
@@ -393,7 +441,9 @@ enum ThemeAssetService {
             sidebarThemeHex: settings.sidebarThemeHex,
             backgroundCropX: settings.normalizedBackgroundCropX,
             backgroundCropY: settings.normalizedBackgroundCropY,
-            backgroundCropZoom: settings.normalizedBackgroundCropZoom
+            backgroundCropZoom: settings.normalizedBackgroundCropZoom,
+            backgroundFogOpacity: settings.normalizedBackgroundFogOpacity,
+            taskDisplayTextColorRawValue: settings.taskDisplayTextColor.rawValue
         )
 
         if let sourcePath = settings.backgroundImagePath {
@@ -412,6 +462,8 @@ enum ThemeAssetService {
         settings.backgroundCropX = preset.normalizedBackgroundCropX
         settings.backgroundCropY = preset.normalizedBackgroundCropY
         settings.backgroundCropZoom = preset.normalizedBackgroundCropZoom
+        settings.backgroundFogOpacity = preset.normalizedBackgroundFogOpacity
+        settings.taskDisplayTextColorRawValue = preset.taskDisplayTextColor.rawValue
 
         if let sourcePath = preset.backgroundImagePath {
             let sourceURL = URL(fileURLWithPath: sourcePath)
@@ -432,6 +484,8 @@ enum ThemeAssetService {
         cropX: Double,
         cropY: Double,
         cropZoom: Double,
+        backgroundFogOpacity: Double,
+        taskDisplayTextColorRawValue: String,
         selectedImageURL: URL?,
         removeBackgroundImage: Bool,
         in context: ModelContext
@@ -450,6 +504,8 @@ enum ThemeAssetService {
         preset.backgroundCropX = cropX.clamped(to: 0...1)
         preset.backgroundCropY = cropY.clamped(to: 0...1)
         preset.backgroundCropZoom = cropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
+        preset.backgroundFogOpacity = backgroundFogOpacity.clamped(to: AppThemeSettings.minimumBackgroundFogOpacity...AppThemeSettings.maximumBackgroundFogOpacity)
+        preset.taskDisplayTextColorRawValue = TaskDisplayTextColor.validRawValue(taskDisplayTextColorRawValue)
 
         if removeBackgroundImage {
             deleteCopiedImage(atPath: preset.backgroundImagePath)
@@ -457,6 +513,7 @@ enum ThemeAssetService {
             preset.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
             preset.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
             preset.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
+            preset.backgroundFogOpacity = AppThemeSettings.defaultBackgroundFogOpacity
         } else if let selectedImageURL {
             let destination = try persistImage(from: selectedImageURL, filenamePrefix: savedThemeAssetPrefix(for: preset.id))
             if destination.path != preset.backgroundImagePath {
@@ -504,6 +561,8 @@ enum ThemeAssetService {
             backgroundCropX: preset.normalizedBackgroundCropX,
             backgroundCropY: preset.normalizedBackgroundCropY,
             backgroundCropZoom: preset.normalizedBackgroundCropZoom,
+            backgroundFogOpacity: preset.normalizedBackgroundFogOpacity,
+            taskDisplayTextColor: preset.taskDisplayTextColor.rawValue,
             backgroundImageFilename: imageFilename
         )
         let encoder = JSONEncoder()
@@ -554,6 +613,8 @@ enum ThemeAssetService {
             backgroundCropX: payload.backgroundCropX.clamped(to: 0...1),
             backgroundCropY: payload.backgroundCropY.clamped(to: 0...1),
             backgroundCropZoom: payload.backgroundCropZoom.clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom),
+            backgroundFogOpacity: (payload.backgroundFogOpacity ?? AppThemeSettings.defaultBackgroundFogOpacity).clamped(to: AppThemeSettings.minimumBackgroundFogOpacity...AppThemeSettings.maximumBackgroundFogOpacity),
+            taskDisplayTextColorRawValue: TaskDisplayTextColor.validRawValue(payload.taskDisplayTextColor),
             backgroundImageURL: imageURL
         )
     }
@@ -574,7 +635,9 @@ enum ThemeAssetService {
             sidebarThemeHex: package.sidebarThemeHex,
             backgroundCropX: package.backgroundCropX,
             backgroundCropY: package.backgroundCropY,
-            backgroundCropZoom: package.backgroundCropZoom
+            backgroundCropZoom: package.backgroundCropZoom,
+            backgroundFogOpacity: package.backgroundFogOpacity,
+            taskDisplayTextColorRawValue: package.taskDisplayTextColorRawValue
         )
 
         if let backgroundImageURL = package.backgroundImageURL {
@@ -584,6 +647,36 @@ enum ThemeAssetService {
 
         context.insert(preset)
         try context.save()
+    }
+
+    private static func bundledThemePackageURLs(in bundle: Bundle) -> [URL] {
+        guard let resourceURL = bundle.resourceURL else { return [] }
+        let directory = resourceURL.appendingPathComponent(bundledThemesDirectoryName, isDirectory: true)
+        let fileManager = FileManager.default
+        guard let contents = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return contents
+            .filter { url in
+                guard url.pathExtension.lowercased() == exportedThemePackageExtension else { return false }
+                return ((try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false)
+            }
+            .sorted { lhs, rhs in
+                lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
+            }
+    }
+
+    private static func savedThemeExists(named rawName: String, in context: ModelContext) -> Bool {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return false }
+        let descriptor = FetchDescriptor<SavedThemePreset>(sortBy: [SortDescriptor(\.createdAt)])
+        let savedThemes = (try? context.fetch(descriptor)) ?? []
+        return savedThemes.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     /// Persists a copy of the selected image under a fresh filename every time.
@@ -636,6 +729,8 @@ struct ImportedThemePackage: Identifiable {
     let backgroundCropX: Double
     let backgroundCropY: Double
     let backgroundCropZoom: Double
+    let backgroundFogOpacity: Double
+    let taskDisplayTextColorRawValue: String
     let backgroundImageURL: URL?
 }
 
@@ -647,6 +742,8 @@ private struct ExportedThemePackagePayload: Codable {
     let backgroundCropX: Double
     let backgroundCropY: Double
     let backgroundCropZoom: Double
+    let backgroundFogOpacity: Double?
+    let taskDisplayTextColor: String?
     let backgroundImageFilename: String?
 }
 
@@ -658,6 +755,10 @@ extension AppThemeSettings {
     static let defaultBackgroundCropZoom = 1.0
     static let minimumBackgroundCropZoom = 1.0
     static let maximumBackgroundCropZoom = 4.0
+    static let defaultBackgroundFogOpacity = 0.12
+    static let minimumBackgroundFogOpacity = 0.0
+    static let maximumBackgroundFogOpacity = 0.2
+    static let defaultTaskDisplayTextColorRawValue = TaskDisplayTextColor.black.rawValue
 
     var themeColor: Color {
         Color(nsColor: nsThemeColor)
@@ -693,6 +794,18 @@ extension AppThemeSettings {
     var normalizedBackgroundCropZoom: Double {
         (backgroundCropZoom ?? Self.defaultBackgroundCropZoom).clamped(to: Self.minimumBackgroundCropZoom...Self.maximumBackgroundCropZoom)
     }
+
+    var normalizedBackgroundFogOpacity: Double {
+        (backgroundFogOpacity ?? Self.defaultBackgroundFogOpacity).clamped(to: Self.minimumBackgroundFogOpacity...Self.maximumBackgroundFogOpacity)
+    }
+
+    var backgroundFogRendering: BackgroundFogRendering {
+        BackgroundFogRendering(fogOpacity: normalizedBackgroundFogOpacity)
+    }
+
+    var taskDisplayTextColor: TaskDisplayTextColor {
+        TaskDisplayTextColor(rawValue: taskDisplayTextColorRawValue ?? Self.defaultTaskDisplayTextColorRawValue) ?? .black
+    }
 }
 
 extension SavedThemePreset {
@@ -727,6 +840,90 @@ extension SavedThemePreset {
 
     var normalizedBackgroundCropZoom: Double {
         (backgroundCropZoom ?? AppThemeSettings.defaultBackgroundCropZoom).clamped(to: AppThemeSettings.minimumBackgroundCropZoom...AppThemeSettings.maximumBackgroundCropZoom)
+    }
+
+    var normalizedBackgroundFogOpacity: Double {
+        (backgroundFogOpacity ?? AppThemeSettings.defaultBackgroundFogOpacity).clamped(to: AppThemeSettings.minimumBackgroundFogOpacity...AppThemeSettings.maximumBackgroundFogOpacity)
+    }
+
+    var backgroundFogRendering: BackgroundFogRendering {
+        BackgroundFogRendering(fogOpacity: normalizedBackgroundFogOpacity)
+    }
+
+    var taskDisplayTextColor: TaskDisplayTextColor {
+        TaskDisplayTextColor(rawValue: taskDisplayTextColorRawValue ?? AppThemeSettings.defaultTaskDisplayTextColorRawValue) ?? .black
+    }
+}
+
+enum TaskDisplayTextColor: String, CaseIterable, Identifiable, Codable {
+    case black
+    case white
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .black:
+            return "黑色"
+        case .white:
+            return "白色"
+        }
+    }
+
+    var primaryColor: Color {
+        switch self {
+        case .black:
+            return .black
+        case .white:
+            return .white
+        }
+    }
+
+    var secondaryColor: Color {
+        switch self {
+        case .black:
+            return .black.opacity(0.62)
+        case .white:
+            return .white.opacity(0.72)
+        }
+    }
+
+    var sectionColor: Color {
+        switch self {
+        case .black:
+            return .black.opacity(0.7)
+        case .white:
+            return .white.opacity(0.82)
+        }
+    }
+
+    static func validRawValue(_ rawValue: String?) -> String {
+        guard let rawValue, Self(rawValue: rawValue) != nil else {
+            return AppThemeSettings.defaultTaskDisplayTextColorRawValue
+        }
+        return rawValue
+    }
+}
+
+struct BackgroundFogRendering {
+    let fogOpacity: Double
+
+    private var intensity: Double {
+        let range = AppThemeSettings.maximumBackgroundFogOpacity - AppThemeSettings.minimumBackgroundFogOpacity
+        guard range > 0 else { return 0 }
+        return ((fogOpacity - AppThemeSettings.minimumBackgroundFogOpacity) / range).clamped(to: 0...1)
+    }
+
+    var detailSurfaceOpacity: Double {
+        0.06 + 0.24 * intensity
+    }
+
+    var detailMistOpacity: Double {
+        0.52 * intensity
+    }
+
+    var previewMistOpacity: Double {
+        0.04 + 0.46 * intensity
     }
 }
 

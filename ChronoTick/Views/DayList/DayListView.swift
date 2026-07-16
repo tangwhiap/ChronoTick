@@ -10,7 +10,12 @@ struct DayListView: View {
     @EnvironmentObject private var viewModel: AppViewModel
     @Environment(\.modelContext) private var modelContext
     @Query(sort: [SortDescriptor(\TaskItem.date), SortDescriptor(\TaskItem.startDateTime), SortDescriptor(\TaskItem.createdAt)]) private var tasks: [TaskItem]
+    @Query(sort: [SortDescriptor(\AppThemeSettings.createdAt)]) private var themeSettings: [AppThemeSettings]
     @State private var showCompleted = true
+
+    private var taskTextColor: TaskDisplayTextColor {
+        themeSettings.first?.taskDisplayTextColor ?? .black
+    }
 
     private var dayTasks: [TaskItem] {
         tasks.filter { Calendar.current.isDate($0.date, inSameDayAs: viewModel.selectedDate) }
@@ -25,10 +30,13 @@ struct DayListView: View {
 
     var body: some View {
         List {
-            Section("待完成") {
+            Section {
                 ForEach(dayTasks.filter { !$0.isCompleted }) { task in
                     row(task)
                 }
+            } header: {
+                Text("待完成")
+                    .foregroundStyle(taskTextColor.sectionColor)
             }
 
             Section {
@@ -38,6 +46,7 @@ struct DayListView: View {
                     }
                 } label: {
                     Text("已完成")
+                        .foregroundStyle(taskTextColor.sectionColor)
                 }
             }
         }
@@ -61,15 +70,16 @@ struct DayListView: View {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(task.title)
+                            .foregroundStyle(taskTextColor.primaryColor)
                         Text(task.displayTimeText)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(taskTextColor.secondaryColor)
                     }
                     Spacer()
                     if task.reminderEnabled {
                         Label("提醒", systemImage: "bell")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(taskTextColor.secondaryColor)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -135,6 +145,7 @@ struct ProjectTaskListDetailContainerView: View {
 
 private struct ProjectTaskListDetailView: View {
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\AppThemeSettings.createdAt)]) private var themeSettings: [AppThemeSettings]
     @Bindable var list: ProjectTaskList
 
     @State private var showCompleted = true
@@ -150,11 +161,16 @@ private struct ProjectTaskListDetailView: View {
         list.tasks.filter(\.isCompleted).sorted(by: projectTaskSort)
     }
 
+    private var taskTextColor: TaskDisplayTextColor {
+        themeSettings.first?.taskDisplayTextColor ?? .black
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(list.name)
                     .font(.largeTitle.bold())
+                    .foregroundStyle(taskTextColor.primaryColor)
                 Spacer()
             }
             .padding(.horizontal)
@@ -170,10 +186,13 @@ private struct ProjectTaskListDetailView: View {
             .padding(.horizontal)
 
             List {
-                Section("未完成") {
+                Section {
                     ForEach(incompleteTasks) { task in
                         projectTaskRow(task)
                     }
+                } header: {
+                    Text("未完成")
+                        .foregroundStyle(taskTextColor.sectionColor)
                 }
 
                 Section {
@@ -183,6 +202,7 @@ private struct ProjectTaskListDetailView: View {
                         }
                     } label: {
                         Text("已完成")
+                            .foregroundStyle(taskTextColor.sectionColor)
                     }
                 }
             }
@@ -256,14 +276,15 @@ private struct ProjectTaskListDetailView: View {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(task.title)
+                            .foregroundStyle(taskTextColor.primaryColor)
                         if task.deadlineDate != nil {
                             Text(task.displayDeadlineText)
                                 .font(.caption)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(taskTextColor.secondaryColor)
                         } else {
                             Text("无截止时间")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(taskTextColor.secondaryColor)
                         }
                     }
                     Spacer()

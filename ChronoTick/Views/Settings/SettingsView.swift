@@ -125,7 +125,7 @@ struct SettingsView: View {
             }
         }
         .sheet(item: $editingSavedTheme) { preset in
-            EditSavedThemeSheet(theme: preset) { updatedName, updatedThemeHex, updatedSidebarHex, cropX, cropY, cropZoom, selectedImageURL, removeBackgroundImage in
+            EditSavedThemeSheet(theme: preset) { updatedName, updatedThemeHex, updatedSidebarHex, cropX, cropY, cropZoom, backgroundFogOpacity, taskDisplayTextColor, selectedImageURL, removeBackgroundImage in
                 do {
                     try ThemeAssetService.updateSavedTheme(
                         preset,
@@ -135,6 +135,8 @@ struct SettingsView: View {
                         cropX: cropX,
                         cropY: cropY,
                         cropZoom: cropZoom,
+                        backgroundFogOpacity: backgroundFogOpacity,
+                        taskDisplayTextColorRawValue: taskDisplayTextColor.rawValue,
                         selectedImageURL: selectedImageURL,
                         removeBackgroundImage: removeBackgroundImage,
                         in: modelContext
@@ -238,7 +240,8 @@ struct SettingsView: View {
                                 backgroundImageURL: themePreference.backgroundImageURL,
                                 cropX: themePreference.normalizedBackgroundCropX,
                                 cropY: themePreference.normalizedBackgroundCropY,
-                                cropZoom: themePreference.normalizedBackgroundCropZoom
+                                cropZoom: themePreference.normalizedBackgroundCropZoom,
+                                backgroundFogOpacity: themePreference.normalizedBackgroundFogOpacity
                             )
 
                             VStack(alignment: .leading, spacing: 10) {
@@ -262,6 +265,17 @@ struct SettingsView: View {
                                         get: { themePreference.sidebarThemeColor },
                                         set: { newValue in
                                             themePreference.sidebarThemeHex = NSColor(newValue).themeHexString
+                                            themePreference.touch()
+                                            try? modelContext.save()
+                                        }
+                                    )
+                                )
+
+                                TaskDisplayTextColorControl(
+                                    selection: Binding(
+                                        get: { themePreference.taskDisplayTextColor },
+                                        set: { newValue in
+                                            themePreference.taskDisplayTextColorRawValue = newValue.rawValue
                                             themePreference.touch()
                                             try? modelContext.save()
                                         }
@@ -302,6 +316,16 @@ struct SettingsView: View {
                                     }
                                 )
                             )
+                            BackgroundFogControl(
+                                fogOpacity: Binding(
+                                    get: { themePreference.normalizedBackgroundFogOpacity },
+                                    set: { newValue in
+                                        themePreference.backgroundFogOpacity = newValue
+                                        themePreference.touch()
+                                        try? modelContext.save()
+                                    }
+                                )
+                            )
                         }
 
                         HStack {
@@ -321,6 +345,8 @@ struct SettingsView: View {
                                 themePreference.backgroundCropX = AppThemeSettings.defaultBackgroundCropX
                                 themePreference.backgroundCropY = AppThemeSettings.defaultBackgroundCropY
                                 themePreference.backgroundCropZoom = AppThemeSettings.defaultBackgroundCropZoom
+                                themePreference.backgroundFogOpacity = AppThemeSettings.defaultBackgroundFogOpacity
+                                themePreference.taskDisplayTextColorRawValue = AppThemeSettings.defaultTaskDisplayTextColorRawValue
                                 themePreference.touch()
                                 try? modelContext.save()
                             }
@@ -370,6 +396,15 @@ struct SettingsView: View {
                                         },
                                         onExport: {
                                             startThemeExport(preset)
+                                        },
+                                        onFogOpacityChange: { newValue in
+                                            preset.backgroundFogOpacity = newValue
+                                            preset.touch()
+                                            do {
+                                                try modelContext.save()
+                                            } catch {
+                                                message = error.localizedDescription
+                                            }
                                         },
                                         onDelete: {
                                             pendingDeleteSavedTheme = preset
@@ -842,6 +877,7 @@ private struct ThemePreviewSwatch: View {
     var cropX: Double = AppThemeSettings.defaultBackgroundCropX
     var cropY: Double = AppThemeSettings.defaultBackgroundCropY
     var cropZoom: Double = AppThemeSettings.defaultBackgroundCropZoom
+    var backgroundFogOpacity: Double = AppThemeSettings.defaultBackgroundFogOpacity
 
     var body: some View {
         ZStack {
@@ -859,13 +895,14 @@ private struct ThemePreviewSwatch: View {
 
             if let imageURL = backgroundImageURL,
                let image = NSImage(contentsOf: imageURL) {
+                let rendering = BackgroundFogRendering(fogOpacity: backgroundFogOpacity)
+
                 FocalCroppedImage(image: image, cropX: cropX, cropY: cropY, cropZoom: cropZoom)
                     .frame(width: 170, height: 108)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .opacity(0.92)
 
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.white.opacity(0.26))
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(rendering.previewMistOpacity))
             }
 
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -900,6 +937,7 @@ private struct SavedThemeCard: View {
     let onApply: () -> Void
     let onEdit: () -> Void
     let onExport: () -> Void
+    let onFogOpacityChange: (Double) -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -912,7 +950,8 @@ private struct SavedThemeCard: View {
                     backgroundImageURL: theme.backgroundImageURL,
                     cropX: theme.normalizedBackgroundCropX,
                     cropY: theme.normalizedBackgroundCropY,
-                    cropZoom: theme.normalizedBackgroundCropZoom
+                    cropZoom: theme.normalizedBackgroundCropZoom,
+                    backgroundFogOpacity: theme.normalizedBackgroundFogOpacity
                 )
             }
             .buttonStyle(.plain)
@@ -923,6 +962,15 @@ private struct SavedThemeCard: View {
             HStack(spacing: 8) {
                 ThemeChip(color: theme.themeColor, title: "主题色1")
                 ThemeChip(color: theme.sidebarThemeColor, title: "主题色2")
+            }
+
+            if theme.backgroundImageURL != nil {
+                BackgroundFogControl(
+                    fogOpacity: Binding(
+                        get: { theme.normalizedBackgroundFogOpacity },
+                        set: onFogOpacityChange
+                    )
+                )
             }
 
             HStack {
@@ -996,6 +1044,52 @@ private struct ThemeChip: View {
                         .stroke(.black.opacity(0.08), lineWidth: 1)
                 )
             Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct BackgroundFogControl: View {
+    @Binding var fogOpacity: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("背景雾化")
+                .font(.caption.bold())
+            HStack(spacing: 8) {
+                Text("清晰")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, alignment: .leading)
+                Slider(
+                    value: $fogOpacity,
+                    in: AppThemeSettings.minimumBackgroundFogOpacity...AppThemeSettings.maximumBackgroundFogOpacity
+                )
+                Text("雾化")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, alignment: .trailing)
+            }
+        }
+    }
+}
+
+private struct TaskDisplayTextColorControl: View {
+    @Binding var selection: TaskDisplayTextColor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("任务文字")
+                .font(.caption.bold())
+            Picker("任务文字", selection: $selection) {
+                ForEach(TaskDisplayTextColor.allCases) { color in
+                    Text(color.title).tag(color)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Text("仅影响每日清单和任务列表详情中的任务文字。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -1465,13 +1559,14 @@ private struct SaveThemeSheet: View {
                 backgroundImageURL: themePreference.backgroundImageURL,
                 cropX: themePreference.normalizedBackgroundCropX,
                 cropY: themePreference.normalizedBackgroundCropY,
-                cropZoom: themePreference.normalizedBackgroundCropZoom
+                cropZoom: themePreference.normalizedBackgroundCropZoom,
+                backgroundFogOpacity: themePreference.normalizedBackgroundFogOpacity
             )
 
             TextField("主题名称", text: $name)
                 .textFieldStyle(.roundedBorder)
 
-            Text("会保存当前背景图片、主题色1和主题色2。背景图片会复制到 ChronoTick 自己的主题库中，不依赖原始文件位置。")
+            Text("会保存当前背景图片、背景雾化、任务文字颜色、主题色1和主题色2。背景图片会复制到 ChronoTick 自己的主题库中，不依赖原始文件位置。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1491,7 +1586,7 @@ private struct SaveThemeSheet: View {
 
 private struct EditSavedThemeSheet: View {
     let theme: SavedThemePreset
-    let onSave: (String, String, String, Double, Double, Double, URL?, Bool) -> Void
+    let onSave: (String, String, String, Double, Double, Double, Double, TaskDisplayTextColor, URL?, Bool) -> Void
     let onCancel: () -> Void
 
     @State private var name: String
@@ -1500,12 +1595,14 @@ private struct EditSavedThemeSheet: View {
     @State private var cropX: Double
     @State private var cropY: Double
     @State private var cropZoom: Double
+    @State private var backgroundFogOpacity: Double
+    @State private var taskDisplayTextColor: TaskDisplayTextColor
     @State private var selectedImageURL: URL?
     @State private var removeBackgroundImage = false
 
     init(
         theme: SavedThemePreset,
-        onSave: @escaping (String, String, String, Double, Double, Double, URL?, Bool) -> Void,
+        onSave: @escaping (String, String, String, Double, Double, Double, Double, TaskDisplayTextColor, URL?, Bool) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.theme = theme
@@ -1517,6 +1614,8 @@ private struct EditSavedThemeSheet: View {
         _cropX = State(initialValue: theme.normalizedBackgroundCropX)
         _cropY = State(initialValue: theme.normalizedBackgroundCropY)
         _cropZoom = State(initialValue: theme.normalizedBackgroundCropZoom)
+        _backgroundFogOpacity = State(initialValue: theme.normalizedBackgroundFogOpacity)
+        _taskDisplayTextColor = State(initialValue: theme.taskDisplayTextColor)
     }
 
     private var effectiveBackgroundImageURL: URL? {
@@ -1536,7 +1635,8 @@ private struct EditSavedThemeSheet: View {
                 backgroundImageURL: effectiveBackgroundImageURL,
                 cropX: cropX,
                 cropY: cropY,
-                cropZoom: cropZoom
+                cropZoom: cropZoom,
+                backgroundFogOpacity: backgroundFogOpacity
             )
 
             TextField("主题名称", text: $name)
@@ -1544,6 +1644,7 @@ private struct EditSavedThemeSheet: View {
 
             ThemeColorRow(title: "主题色1", description: "用于按钮、选中态和强调元素。", selection: $themeColor)
             ThemeColorRow(title: "主题色2", description: "用于左侧栏不受背景图直接影响的基础底色。", selection: $sidebarThemeColor)
+            TaskDisplayTextColorControl(selection: $taskDisplayTextColor)
 
             HStack {
                 Button("更换背景图") {
@@ -1558,6 +1659,7 @@ private struct EditSavedThemeSheet: View {
                         cropX = AppThemeSettings.defaultBackgroundCropX
                         cropY = AppThemeSettings.defaultBackgroundCropY
                         cropZoom = AppThemeSettings.defaultBackgroundCropZoom
+                        backgroundFogOpacity = AppThemeSettings.defaultBackgroundFogOpacity
                     }
                 }
                 if effectiveBackgroundImageURL != nil {
@@ -1567,12 +1669,14 @@ private struct EditSavedThemeSheet: View {
                         cropX = AppThemeSettings.defaultBackgroundCropX
                         cropY = AppThemeSettings.defaultBackgroundCropY
                         cropZoom = AppThemeSettings.defaultBackgroundCropZoom
+                        backgroundFogOpacity = AppThemeSettings.defaultBackgroundFogOpacity
                     }
                 }
             }
 
             if let effectiveBackgroundImageURL {
                 ThemeImageCropControl(imageURL: effectiveBackgroundImageURL, cropX: $cropX, cropY: $cropY, cropZoom: $cropZoom)
+                BackgroundFogControl(fogOpacity: $backgroundFogOpacity)
             }
 
             Text("保存后会同步更新主题数据库，并替换旧的主题图片副本，避免无用文件残留。")
@@ -1590,6 +1694,8 @@ private struct EditSavedThemeSheet: View {
                         cropX,
                         cropY,
                         cropZoom,
+                        backgroundFogOpacity,
+                        taskDisplayTextColor,
                         selectedImageURL,
                         removeBackgroundImage
                     )

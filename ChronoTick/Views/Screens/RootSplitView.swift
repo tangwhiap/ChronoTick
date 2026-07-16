@@ -32,7 +32,7 @@ struct RootSplitView: View {
                     .navigationTitle("ChronoTick")
             } detail: {
                 ZStack {
-                    detailBackgroundColor
+                    DetailThemeBackground(themeSettings: themeSettingsValue)
                         .ignoresSafeArea()
 
                     VStack(spacing: 0) {
@@ -100,10 +100,6 @@ struct RootSplitView: View {
         themeSettingsValue?.themeColor ?? Color(nsColor: NSColor(themeHex: AppThemeSettings.defaultThemeHex) ?? .controlAccentColor)
     }
 
-    private var detailBackgroundColor: Color {
-        let base = Color(nsColor: .windowBackgroundColor)
-        return themeSettingsValue?.backgroundImageURL == nil ? base : base.opacity(0.72)
-    }
 }
 
 private struct SidebarView: View {
@@ -815,10 +811,43 @@ private struct AppThemeBackdrop: View {
                     .opacity(1)
 
                     Rectangle()
-                        .fill(.white.opacity(0.12))
+                        .fill(.white.opacity(AppThemeSettings.defaultBackgroundFogOpacity))
                 }
             }
             .ignoresSafeArea()
+        }
+    }
+}
+
+private struct DetailThemeBackground: View {
+    let themeSettings: AppThemeSettings?
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color(nsColor: .windowBackgroundColor)
+
+                if let themeSettings,
+                   let imageURL = themeSettings.backgroundImageURL,
+                   let image = NSImage(contentsOf: imageURL) {
+                    let rendering = themeSettings.backgroundFogRendering
+
+                    FocalCroppedImage(
+                        image: image,
+                        cropX: themeSettings.normalizedBackgroundCropX,
+                        cropY: themeSettings.normalizedBackgroundCropY,
+                        cropZoom: themeSettings.normalizedBackgroundCropZoom
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+
+                    Rectangle()
+                        .fill(Color(nsColor: .windowBackgroundColor).opacity(rendering.detailSurfaceOpacity))
+
+                    Rectangle()
+                        .fill(.white.opacity(rendering.detailMistOpacity))
+                }
+            }
+            .clipped()
         }
     }
 }
