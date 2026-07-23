@@ -14,6 +14,7 @@ struct ChronoTickApp: App {
     init() {
         let schema = Schema([
             TaskItem.self,
+            ProjectTaskListFolder.self,
             ProjectTaskList.self,
             ProjectTask.self,
             DailyTaskReminderRule.self,

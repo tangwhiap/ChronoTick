@@ -1,6 +1,8 @@
 import AppKit
+import CoreTransferable
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// `RootSplitView` is the composition root for the macOS app shell.
 ///
@@ -107,13 +109,20 @@ private struct SidebarView: View {
     @EnvironmentObject private var viewModel: AppViewModel
     @Query(sort: [SortDescriptor(\TaskItem.date), SortDescriptor(\TaskItem.createdAt)]) private var tasks: [TaskItem]
     @Query(sort: [SortDescriptor(\ProjectTaskList.createdAt)]) private var projectTaskLists: [ProjectTaskList]
+    @Query(sort: [SortDescriptor(\ProjectTaskListFolder.createdAt)]) private var projectTaskListFolders: [ProjectTaskListFolder]
+
     @State private var isDayListExpanded = true
     @State private var isProjectListsExpanded = true
+    @State private var expandedFolderIDs: Set<UUID> = []
+    @State private var rootDropIsTargeted = false
+    @State private var dropTargetedFolderID: UUID?
     @State private var pendingDeleteDate: Date?
     @State private var editingDayListEntry: SidebarDayListEntry?
     @State private var pendingDeleteProjectTaskList: ProjectTaskList?
-    @State private var renamingProjectTaskList: ProjectTaskList?
-    @State private var isPresentingCreateProjectList = false
+    @State private var pendingDeleteProjectTaskListFolder: ProjectTaskListFolder?
+    @State private var projectNodeNameRequest: ProjectNodeNameRequest?
+    @State private var hierarchyErrorMessage: String?
+
     let themeSettings: AppThemeSettings?
 
     private var dayListEntries: [SidebarDayListEntry] {
@@ -132,6 +141,10 @@ private struct SidebarView: View {
         return completionByDate
             .map { SidebarDayListEntry(date: $0.key, isCompleted: $0.value) }
             .sorted { $0.date > $1.date }
+    }
+
+    private var visibleProjectNodes: [VisibleProjectNode] {
+        flattenedProjectNodes(onlyExpandedFolders: true)
     }
 
     private var rowSelectionColor: Color {
@@ -184,48 +197,23 @@ private struct SidebarView: View {
 
             Section {
                 DisclosureGroup(isExpanded: $isProjectListsExpanded) {
-                    if projectTaskLists.isEmpty {
-                        Text("暂无任务列表")
+                    if projectTaskLists.isEmpty && projectTaskListFolders.isEmpty {
+                        Text("暂无任务列表或文件夹")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     } else {
-                        ForEach(projectTaskLists) { list in
-                            Button {
-                                viewModel.openProjectTaskList(list)
-                            } label: {
-                                Text(list.name)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 6)
-                                    .padding(.horizontal, 10)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(isSelected(projectTaskList: list) ? rowSelectionColor : rowIdleColor)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button("重命名") {
-                                    renamingProjectTaskList = list
-                                }
-                                Button("删除列表", role: .destructive) {
-                                    pendingDeleteProjectTaskList = list
-                                }
+                        ForEach(visibleProjectNodes) { visibleNode in
+                            switch visibleNode.node {
+                            case .list(let list):
+                                projectListRow(list, depth: visibleNode.depth)
+                            case .folder(let folder):
+                                projectFolderRow(folder, depth: visibleNode.depth)
                             }
                         }
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        Label("任务列表", systemImage: AppViewModel.Section.projectLists.systemImage)
-                        Spacer()
-                        Button {
-                            isPresentingCreateProjectList = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("新建任务列表")
-                    }
+                    projectListsHeader
                 }
             }
 
@@ -239,9 +227,7 @@ private struct SidebarView: View {
             "删除该日列表？",
             isPresented: Binding(
                 get: { pendingDeleteDate != nil },
-                set: { isPresented in
-                    if !isPresented { pendingDeleteDate = nil }
-                }
+                set: { if !$0 { pendingDeleteDate = nil } }
             ),
             titleVisibility: .visible
         ) {
@@ -255,9 +241,7 @@ private struct SidebarView: View {
                 viewModel.deleteTasks(on: date, from: tasks, modelContext: modelContext)
                 pendingDeleteDate = nil
             }
-            Button("取消", role: .cancel) {
-                pendingDeleteDate = nil
-            }
+            Button("取消", role: .cancel) { pendingDeleteDate = nil }
         } message: {
             if let pendingDeleteDate {
                 Text("这会删除 \(Self.dayListFormatter.string(from: pendingDeleteDate)) 下的全部所属任务。")
@@ -267,39 +251,30 @@ private struct SidebarView: View {
             "删除该任务列表？",
             isPresented: Binding(
                 get: { pendingDeleteProjectTaskList != nil },
-                set: { isPresented in
-                    if !isPresented { pendingDeleteProjectTaskList = nil }
-                }
+                set: { if !$0 { pendingDeleteProjectTaskList = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("删除", role: .destructive) {
-                guard let list = pendingDeleteProjectTaskList else { return }
-                let deletingSelectedList = viewModel.selectedProjectTaskListID == list.id
-                viewModel.deleteProjectTaskList(list, modelContext: modelContext)
-
-                if deletingSelectedList {
-                    let remainingList = projectTaskLists.first(where: { $0.id != list.id })
-                    viewModel.selectedProjectTaskListID = remainingList?.id
-                    viewModel.selectedSection = remainingList == nil ? .week : .projectLists
-                }
-
-                pendingDeleteProjectTaskList = nil
-            }
-            Button("取消", role: .cancel) {
-                pendingDeleteProjectTaskList = nil
-            }
+            Button("删除", role: .destructive, action: deletePendingProjectTaskList)
+            Button("取消", role: .cancel) { pendingDeleteProjectTaskList = nil }
         } message: {
-            if let pendingDeleteProjectTaskList {
-                Text("这会删除任务列表“\(pendingDeleteProjectTaskList.name)”及其中的全部任务。删除后这些任务的 deadline 也不会再显示在周视图中。")
+            if let list = pendingDeleteProjectTaskList {
+                Text("这会删除任务列表“\(list.name)”及其中的全部任务。删除后这些任务的 deadline 也不会再显示在周视图中。")
             }
         }
-        .sheet(isPresented: $isPresentingCreateProjectList) {
-            CreateProjectTaskListSheet { name in
-                viewModel.createProjectTaskList(named: name, modelContext: modelContext)
-                isPresentingCreateProjectList = false
-            } onCancel: {
-                isPresentingCreateProjectList = false
+        .confirmationDialog(
+            "删除该文件夹？",
+            isPresented: Binding(
+                get: { pendingDeleteProjectTaskListFolder != nil },
+                set: { if !$0 { pendingDeleteProjectTaskListFolder = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除文件夹及全部内容", role: .destructive, action: deletePendingProjectTaskListFolder)
+            Button("取消", role: .cancel) { pendingDeleteProjectTaskListFolder = nil }
+        } message: {
+            if let folder = pendingDeleteProjectTaskListFolder {
+                Text("这会删除文件夹“\(folder.name)”内的全部任务列表、子文件夹和任务，且无法撤销。")
             }
         }
         .sheet(item: $editingDayListEntry) { entry in
@@ -319,12 +294,142 @@ private struct SidebarView: View {
                 editingDayListEntry = nil
             }
         }
-        .sheet(item: $renamingProjectTaskList) { list in
-            RenameProjectTaskListSheet(list: list) { newName in
-                viewModel.renameProjectTaskList(list, to: newName, modelContext: modelContext)
-                renamingProjectTaskList = nil
-            } onCancel: {
-                renamingProjectTaskList = nil
+        .sheet(item: $projectNodeNameRequest) { request in
+            ProjectNodeNameSheet(
+                title: request.title,
+                placeholder: request.placeholder,
+                initialName: request.initialName,
+                confirmTitle: request.confirmTitle,
+                onConfirm: { name in submitProjectNodeNameRequest(request, name: name) },
+                onCancel: { projectNodeNameRequest = nil }
+            )
+        }
+        .alert(
+            "无法完成操作",
+            isPresented: Binding(
+                get: { hierarchyErrorMessage != nil },
+                set: { if !$0 { hierarchyErrorMessage = nil } }
+            )
+        ) {
+            Button("确定", role: .cancel) { hierarchyErrorMessage = nil }
+        } message: {
+            Text(hierarchyErrorMessage ?? "")
+        }
+    }
+
+    private var projectListsHeader: some View {
+        HStack(spacing: 8) {
+            Label("任务列表", systemImage: AppViewModel.Section.projectLists.systemImage)
+            Spacer()
+            Menu {
+                Button("新建任务列表", systemImage: "checklist") {
+                    projectNodeNameRequest = .create(kind: .list, parentFolder: nil)
+                }
+                Button("新建文件夹", systemImage: "folder.badge.plus") {
+                    projectNodeNameRequest = .create(kind: .folder, parentFolder: nil)
+                }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("新建任务列表或文件夹")
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(rootDropIsTargeted ? rowSelectionColor : Color.clear)
+        )
+        .dropDestination(for: ProjectSidebarDragItem.self) { items, _ in
+            guard let item = items.first else { return false }
+            return moveProjectNode(item, to: nil)
+        } isTargeted: { isTargeted in
+            rootDropIsTargeted = isTargeted
+        }
+    }
+
+    private func projectListRow(_ list: ProjectTaskList, depth: Int) -> some View {
+        Button {
+            viewModel.openProjectTaskList(list)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "checklist")
+                    .foregroundStyle(.secondary)
+                Text(list.name)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.leading, CGFloat(depth) * 14)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected(projectTaskList: list) ? rowSelectionColor : rowIdleColor)
+            )
+        }
+        .buttonStyle(.plain)
+        .draggable(ProjectSidebarDragItem(kind: .list, id: list.id))
+        .contextMenu {
+            Button("重命名") {
+                projectNodeNameRequest = .rename(.list(list))
+            }
+            Button("删除列表", role: .destructive) {
+                pendingDeleteProjectTaskList = list
+            }
+        }
+    }
+
+    private func projectFolderRow(_ folder: ProjectTaskListFolder, depth: Int) -> some View {
+        Button {
+            toggleFolder(folder)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: expandedFolderIDs.contains(folder.id) ? "chevron.down" : "chevron.right")
+                    .font(.caption.bold())
+                    .frame(width: 10)
+                Image(systemName: expandedFolderIDs.contains(folder.id) ? "folder.fill" : "folder")
+                    .foregroundStyle(.secondary)
+                Text(folder.name)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.leading, CGFloat(depth) * 14)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(dropTargetedFolderID == folder.id ? rowSelectionColor : rowIdleColor)
+            )
+        }
+        .buttonStyle(.plain)
+        .draggable(ProjectSidebarDragItem(kind: .folder, id: folder.id))
+        .dropDestination(for: ProjectSidebarDragItem.self) { items, _ in
+            guard let item = items.first else { return false }
+            return moveProjectNode(item, to: folder)
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                dropTargetedFolderID = folder.id
+            } else if dropTargetedFolderID == folder.id {
+                dropTargetedFolderID = nil
+            }
+        }
+        .contextMenu {
+            Button("新建任务列表", systemImage: "checklist") {
+                projectNodeNameRequest = .create(kind: .list, parentFolder: folder)
+            }
+            Button("新建文件夹", systemImage: "folder.badge.plus") {
+                projectNodeNameRequest = .create(kind: .folder, parentFolder: folder)
+            }
+            .disabled(folder.hierarchyDepth >= ProjectListHierarchyPolicy.maximumFolderDepth)
+            Divider()
+            Button("重命名") {
+                projectNodeNameRequest = .rename(.folder(folder))
+            }
+            Button("删除文件夹", role: .destructive) {
+                pendingDeleteProjectTaskListFolder = folder
             }
         }
     }
@@ -339,9 +444,180 @@ private struct SidebarView: View {
                 .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-        .listRowBackground(
-            (viewModel.selectedSection == section ? rowSelectionColor : Color.clear)
+        .listRowBackground(viewModel.selectedSection == section ? rowSelectionColor : Color.clear)
+    }
+
+    private func toggleFolder(_ folder: ProjectTaskListFolder) {
+        if expandedFolderIDs.contains(folder.id) {
+            expandedFolderIDs.remove(folder.id)
+        } else {
+            expandedFolderIDs.insert(folder.id)
+        }
+    }
+
+    private func moveProjectNode(
+        _ item: ProjectSidebarDragItem,
+        to parentFolder: ProjectTaskListFolder?
+    ) -> Bool {
+        do {
+            switch item.kind {
+            case .list:
+                guard let list = projectTaskLists.first(where: { $0.id == item.id }) else {
+                    hierarchyErrorMessage = "拖动的任务列表已不存在。"
+                    return false
+                }
+                try viewModel.moveProjectTaskList(list, to: parentFolder, modelContext: modelContext)
+            case .folder:
+                guard let folder = projectTaskListFolders.first(where: { $0.id == item.id }) else {
+                    hierarchyErrorMessage = "拖动的文件夹已不存在。"
+                    return false
+                }
+                try viewModel.moveProjectTaskListFolder(folder, to: parentFolder, modelContext: modelContext)
+            }
+
+            if let parentFolder {
+                expandedFolderIDs.insert(parentFolder.id)
+            }
+            isProjectListsExpanded = true
+            return true
+        } catch {
+            hierarchyErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func submitProjectNodeNameRequest(_ request: ProjectNodeNameRequest, name: String) -> String? {
+        do {
+            switch request.purpose {
+            case .create(let kind, let parentFolder):
+                switch kind {
+                case .list:
+                    try viewModel.createProjectTaskList(named: name, in: parentFolder, modelContext: modelContext)
+                case .folder:
+                    try viewModel.createProjectTaskListFolder(named: name, in: parentFolder, modelContext: modelContext)
+                }
+                if let parentFolder {
+                    expandedFolderIDs.insert(parentFolder.id)
+                }
+                isProjectListsExpanded = true
+            case .rename(let node):
+                switch node {
+                case .list(let list):
+                    try viewModel.renameProjectTaskList(list, to: name, modelContext: modelContext)
+                case .folder(let folder):
+                    try viewModel.renameProjectTaskListFolder(folder, to: name, modelContext: modelContext)
+                }
+            }
+
+            projectNodeNameRequest = nil
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func deletePendingProjectTaskList() {
+        guard let list = pendingDeleteProjectTaskList else { return }
+        let deletedIDs: Set<UUID> = [list.id]
+        let fallback = orderedProjectTaskLists(excluding: deletedIDs).first
+
+        do {
+            try viewModel.deleteProjectTaskList(list, modelContext: modelContext)
+            updateSelectionAfterDeletingLists(deletedIDs, fallback: fallback)
+        } catch {
+            hierarchyErrorMessage = error.localizedDescription
+        }
+        pendingDeleteProjectTaskList = nil
+    }
+
+    private func deletePendingProjectTaskListFolder() {
+        guard let folder = pendingDeleteProjectTaskListFolder else { return }
+        let deletedIDs = Set(projectTaskLists.filter { isList($0, inside: folder) }.map(\.id))
+        let fallback = orderedProjectTaskLists(excluding: deletedIDs).first
+
+        do {
+            try viewModel.deleteProjectTaskListFolder(folder, modelContext: modelContext)
+            expandedFolderIDs.subtract(folderAndDescendantIDs(folder))
+            updateSelectionAfterDeletingLists(deletedIDs, fallback: fallback)
+        } catch {
+            hierarchyErrorMessage = error.localizedDescription
+        }
+        pendingDeleteProjectTaskListFolder = nil
+    }
+
+    private func updateSelectionAfterDeletingLists(_ deletedIDs: Set<UUID>, fallback: ProjectTaskList?) {
+        viewModel.reconcileProjectTaskListSelection(afterDeleting: deletedIDs, fallback: fallback)
+    }
+
+    private func orderedProjectTaskLists(excluding excludedIDs: Set<UUID>) -> [ProjectTaskList] {
+        flattenedProjectNodes(onlyExpandedFolders: false).compactMap { visibleNode in
+            guard case .list(let list) = visibleNode.node, !excludedIDs.contains(list.id) else { return nil }
+            return list
+        }
+    }
+
+    private func flattenedProjectNodes(onlyExpandedFolders: Bool) -> [VisibleProjectNode] {
+        var result: [VisibleProjectNode] = []
+        var visitedFolderIDs: Set<UUID> = []
+        appendProjectNodes(
+            parentFolderID: nil,
+            depth: 0,
+            onlyExpandedFolders: onlyExpandedFolders,
+            visitedFolderIDs: &visitedFolderIDs,
+            result: &result
         )
+        return result
+    }
+
+    private func appendProjectNodes(
+        parentFolderID: UUID?,
+        depth: Int,
+        onlyExpandedFolders: Bool,
+        visitedFolderIDs: inout Set<UUID>,
+        result: inout [VisibleProjectNode]
+    ) {
+        let lists = projectTaskLists
+            .filter { $0.parentFolder?.id == parentFolderID }
+            .map(ProjectSidebarNode.list)
+        let folders = projectTaskListFolders
+            .filter { $0.parentFolder?.id == parentFolderID }
+            .map(ProjectSidebarNode.folder)
+        let siblings = (lists + folders).sorted(by: ProjectSidebarNode.stableOrder)
+
+        for node in siblings {
+            result.append(VisibleProjectNode(node: node, depth: depth))
+            guard case .folder(let folder) = node,
+                  visitedFolderIDs.insert(folder.id).inserted,
+                  !onlyExpandedFolders || expandedFolderIDs.contains(folder.id)
+            else { continue }
+
+            appendProjectNodes(
+                parentFolderID: folder.id,
+                depth: depth + 1,
+                onlyExpandedFolders: onlyExpandedFolders,
+                visitedFolderIDs: &visitedFolderIDs,
+                result: &result
+            )
+        }
+    }
+
+    private func isList(_ list: ProjectTaskList, inside folder: ProjectTaskListFolder) -> Bool {
+        var visited: Set<UUID> = []
+        var ancestor = list.parentFolder
+        while let current = ancestor, visited.insert(current.id).inserted {
+            if current.id == folder.id { return true }
+            ancestor = current.parentFolder
+        }
+        return false
+    }
+
+    private func folderAndDescendantIDs(_ folder: ProjectTaskListFolder) -> Set<UUID> {
+        var result: Set<UUID> = []
+        var pending = [folder]
+        while let current = pending.popLast(), result.insert(current.id).inserted {
+            pending.append(contentsOf: current.childFolders)
+        }
+        return result
     }
 
     private func isSelected(projectTaskList list: ProjectTaskList) -> Bool {
@@ -354,6 +630,113 @@ private struct SidebarView: View {
         formatter.dateFormat = "MM/dd/yy"
         return formatter
     }()
+}
+
+private enum ProjectNodeKind {
+    case list
+    case folder
+}
+
+private enum ProjectSidebarNodeReference {
+    case list(ProjectTaskList)
+    case folder(ProjectTaskListFolder)
+}
+
+private struct ProjectNodeNameRequest: Identifiable {
+    enum Purpose {
+        case create(ProjectNodeKind, parentFolder: ProjectTaskListFolder?)
+        case rename(ProjectSidebarNodeReference)
+    }
+
+    let id = UUID()
+    let purpose: Purpose
+
+    static func create(kind: ProjectNodeKind, parentFolder: ProjectTaskListFolder?) -> Self {
+        Self(purpose: .create(kind, parentFolder: parentFolder))
+    }
+
+    static func rename(_ node: ProjectSidebarNodeReference) -> Self {
+        Self(purpose: .rename(node))
+    }
+
+    var title: String {
+        switch purpose {
+        case .create(.list, _): return "新建任务列表"
+        case .create(.folder, _): return "新建文件夹"
+        case .rename(.list): return "重命名任务列表"
+        case .rename(.folder): return "重命名文件夹"
+        }
+    }
+
+    var placeholder: String {
+        switch purpose {
+        case .create(.list, _), .rename(.list): return "任务列表名称"
+        case .create(.folder, _), .rename(.folder): return "文件夹名称"
+        }
+    }
+
+    var initialName: String {
+        switch purpose {
+        case .create: return ""
+        case .rename(.list(let list)): return list.name
+        case .rename(.folder(let folder)): return folder.name
+        }
+    }
+
+    var confirmTitle: String {
+        switch purpose {
+        case .create: return "创建"
+        case .rename: return "保存"
+        }
+    }
+}
+
+private enum ProjectSidebarNode {
+    case list(ProjectTaskList)
+    case folder(ProjectTaskListFolder)
+
+    var stableID: String {
+        switch self {
+        case .list(let list): return "list-\(list.id.uuidString)"
+        case .folder(let folder): return "folder-\(folder.id.uuidString)"
+        }
+    }
+
+    var createdAt: Date {
+        switch self {
+        case .list(let list): return list.createdAt
+        case .folder(let folder): return folder.createdAt
+        }
+    }
+
+    static func stableOrder(_ lhs: Self, _ rhs: Self) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.stableID < rhs.stableID
+    }
+}
+
+private struct VisibleProjectNode: Identifiable {
+    let node: ProjectSidebarNode
+    let depth: Int
+    var id: String { node.stableID }
+}
+
+private struct ProjectSidebarDragItem: Codable, Transferable {
+    enum Kind: String, Codable {
+        case list
+        case folder
+    }
+
+    let kind: Kind
+    let id: UUID
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .chronoTickProjectSidebarItem)
+    }
+}
+
+private extension UTType {
+    static let chronoTickProjectSidebarItem = UTType(exportedAs: "com.example.chronotick.project-sidebar-item")
 }
 
 private struct SidebarDayListEntry: Identifiable, Equatable {
@@ -609,68 +992,37 @@ private struct EditDailyChecklistDateSheet: View {
     }
 }
 
-private struct CreateProjectTaskListSheet: View {
-    let onConfirm: (String) -> Void
-    let onCancel: () -> Void
-
-    @State private var name = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("新建任务列表")
-                .font(.title3.bold())
-            TextField("任务列表名称", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(submit)
-                .onChange(of: name) { _, newValue in
-                    guard newValue.last?.isWhitespace == true else { return }
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    name = trimmed
-                    submit()
-                }
-            HStack {
-                Spacer()
-                Button("取消", action: onCancel)
-                Button("创建", action: submit)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(24)
-        .frame(width: 360)
-    }
-
-    private func submit() {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        onConfirm(trimmed)
-    }
-}
-
-/// Renaming uses a dedicated sheet so the sidebar stays lightweight while still supporting
-/// future validation or additional metadata fields without crowding the context menu.
-private struct RenameProjectTaskListSheet: View {
-    @Query(sort: [SortDescriptor(\ProjectTaskList.createdAt)]) private var projectTaskLists: [ProjectTaskList]
-
-    let list: ProjectTaskList
-    let onConfirm: (String) -> Void
+private struct ProjectNodeNameSheet: View {
+    let title: String
+    let placeholder: String
+    let confirmTitle: String
+    let onConfirm: (String) -> String?
     let onCancel: () -> Void
 
     @State private var name: String
     @State private var validationMessage: String?
 
-    init(list: ProjectTaskList, onConfirm: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
-        self.list = list
+    init(
+        title: String,
+        placeholder: String,
+        initialName: String,
+        confirmTitle: String,
+        onConfirm: @escaping (String) -> String?,
+        onCancel: @escaping () -> Void
+    ) {
+        self.title = title
+        self.placeholder = placeholder
+        self.confirmTitle = confirmTitle
         self.onConfirm = onConfirm
         self.onCancel = onCancel
-        _name = State(initialValue: list.name)
+        _name = State(initialValue: initialName)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("重命名任务列表")
+            Text(title)
                 .font(.title3.bold())
-            TextField("任务列表名称", text: $name)
+            TextField(placeholder, text: $name)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(submit)
 
@@ -683,8 +1035,9 @@ private struct RenameProjectTaskListSheet: View {
             HStack {
                 Spacer()
                 Button("取消", action: onCancel)
-                Button("保存", action: submit)
-                    .disabled(trimmedName.isEmpty || trimmedName == list.name)
+                Button(confirmTitle, action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedName.isEmpty)
             }
         }
         .padding(24)
@@ -697,16 +1050,7 @@ private struct RenameProjectTaskListSheet: View {
 
     private func submit() {
         guard !trimmedName.isEmpty else { return }
-        let duplicateExists = projectTaskLists.contains {
-            $0.id != list.id && $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame
-        }
-        guard !duplicateExists else {
-            validationMessage = "任务列表名称不能与现有任务列表重复。"
-            return
-        }
-
-        validationMessage = nil
-        onConfirm(trimmedName)
+        validationMessage = onConfirm(trimmedName)
     }
 }
 

@@ -112,6 +112,7 @@ final class DailyChecklistDateChangeTests: XCTestCase {
     private func makeModelContext() throws -> ModelContext {
         let schema = Schema([
             TaskItem.self,
+            ProjectTaskListFolder.self,
             ProjectTaskList.self,
             ProjectTask.self,
             DailyTaskReminderRule.self,

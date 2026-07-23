@@ -107,12 +107,121 @@ extension TaskItem {
     }
 }
 
+enum ProjectListHierarchyPolicy {
+    /// Root items are depth zero; folders occupy depths one through this value.
+    static let maximumFolderDepth = 3
+}
+
+enum ProjectListHierarchyError: LocalizedError, Equatable {
+    case emptyName
+    case duplicateName
+    case maximumDepthExceeded
+    case cannotMoveFolderIntoItself
+    case cannotMoveFolderIntoDescendant
+    case persistenceFailure(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyName:
+            return "名称不能为空。"
+        case .duplicateName:
+            return "同一层级中的任务列表和文件夹不能重名。"
+        case .maximumDepthExceeded:
+            return "文件夹最多只能嵌套 \(ProjectListHierarchyPolicy.maximumFolderDepth) 层。"
+        case .cannotMoveFolderIntoItself:
+            return "不能将文件夹移动到其自身。"
+        case .cannotMoveFolderIntoDescendant:
+            return "不能将文件夹移动到它的子文件夹中。"
+        case .persistenceFailure(let message):
+            return "无法保存任务列表层级：\(message)"
+        }
+    }
+}
+
+@Model
+final class ProjectTaskListFolder {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    var parentFolder: ProjectTaskListFolder?
+
+    @Relationship(deleteRule: .cascade, inverse: \ProjectTaskListFolder.parentFolder)
+    var childFolders: [ProjectTaskListFolder]
+
+    @Relationship(deleteRule: .cascade, inverse: \ProjectTaskList.parentFolder)
+    var lists: [ProjectTaskList]
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        createdAt: Date = .now,
+        updatedAt: Date = .now,
+        parentFolder: ProjectTaskListFolder? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.parentFolder = parentFolder
+        self.childFolders = []
+        self.lists = []
+    }
+
+    func touch() {
+        updatedAt = .now
+    }
+}
+
+extension ProjectTaskListFolder {
+    var hierarchyDepth: Int {
+        var depth = 1
+        var visited: Set<UUID> = [id]
+        var ancestor = parentFolder
+
+        while let folder = ancestor, visited.insert(folder.id).inserted {
+            depth += 1
+            ancestor = folder.parentFolder
+        }
+
+        return depth
+    }
+
+    var subtreeHeight: Int {
+        subtreeHeight(visited: [])
+    }
+
+    func containsDescendant(_ candidate: ProjectTaskListFolder) -> Bool {
+        var visited: Set<UUID> = []
+        return containsDescendant(candidate, visited: &visited)
+    }
+
+    private func subtreeHeight(visited: Set<UUID>) -> Int {
+        guard !visited.contains(id) else { return 0 }
+        var nextVisited = visited
+        nextVisited.insert(id)
+        return 1 + (childFolders.map { $0.subtreeHeight(visited: nextVisited) }.max() ?? 0)
+    }
+
+    private func containsDescendant(_ candidate: ProjectTaskListFolder, visited: inout Set<UUID>) -> Bool {
+        guard visited.insert(id).inserted else { return false }
+        for child in childFolders {
+            if child.id == candidate.id || child.containsDescendant(candidate, visited: &visited) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 @Model
 final class ProjectTaskList {
     @Attribute(.unique) var id: UUID
     var name: String
     var createdAt: Date
     var updatedAt: Date
+    var parentFolder: ProjectTaskListFolder?
 
     @Relationship(deleteRule: .cascade, inverse: \ProjectTask.list)
     var tasks: [ProjectTask]
@@ -121,12 +230,14 @@ final class ProjectTaskList {
         id: UUID = UUID(),
         name: String,
         createdAt: Date = .now,
-        updatedAt: Date = .now
+        updatedAt: Date = .now,
+        parentFolder: ProjectTaskListFolder? = nil
     ) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.parentFolder = parentFolder
         self.tasks = []
     }
 

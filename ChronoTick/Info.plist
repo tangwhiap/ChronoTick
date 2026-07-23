@@ -32,7 +32,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.0.1</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ChronoTickAppGroupIdentifier</key>
@@ -61,6 +61,16 @@
 					<string>chronoticktheme</string>
 				</array>
 			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>ChronoTick Project Sidebar Item</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.example.chronotick.project-sidebar-item</string>
 		</dict>
 	</array>
 </dict>

@@ -45,6 +45,7 @@
 		C10000000000000000000005 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C10000000000000000000017 /* SwiftUI.framework */; };
 		C10000000000000000000006 /* ChronoTickWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000015 /* ChronoTickWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		C10000000000000000000007 /* WorkRestWidgetStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000019 /* WorkRestWidgetStateTests.swift */; };
+		D20000000000000000000001 /* ProjectListHierarchyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* ProjectListHierarchyTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -125,6 +126,7 @@
 		C10000000000000000000017 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		C10000000000000000000018 /* ChronoTick.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ChronoTick.entitlements; sourceTree = "<group>"; };
 		C10000000000000000000019 /* WorkRestWidgetStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRestWidgetStateTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000002 /* ProjectListHierarchyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectListHierarchyTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -197,6 +199,7 @@
 						A0000000000000000000006B,
 				B10000000000000000000013,
 				C10000000000000000000019,
+				D20000000000000000000002 /* ProjectListHierarchyTests.swift */,
 			);
 			path = ChronoTickTests;
 			sourceTree = "<group>";
@@ -428,6 +431,7 @@
 							A0000000000000000000006A,
 				B10000000000000000000003,
 				C10000000000000000000007,
+				D20000000000000000000001 /* ProjectListHierarchyTests.swift in Sources */,
 						);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

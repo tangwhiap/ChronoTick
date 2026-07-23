@@ -151,29 +151,83 @@ final class AppViewModel: ObservableObject {
         selectedSection = .projectLists
     }
 
-    func createProjectTaskList(named rawName: String, modelContext: ModelContext) {
-        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let list = ProjectTaskList(name: trimmed)
-        modelContext.insert(list)
-        try? modelContext.save()
+    @discardableResult
+    func createProjectTaskList(
+        named rawName: String,
+        in parentFolder: ProjectTaskListFolder? = nil,
+        modelContext: ModelContext
+    ) throws -> ProjectTaskList {
+        let list = try TaskMutationCoordinator.createProjectTaskList(
+            named: rawName,
+            in: parentFolder,
+            modelContext: modelContext
+        )
         openProjectTaskList(list)
+        return list
     }
 
-    /// Renames an existing project task list without changing its identity or tasks.
-    ///
-    /// The list object itself remains the same; only the user-facing title changes, which keeps
-    /// navigation selection and task ownership stable.
-    func renameProjectTaskList(_ list: ProjectTaskList, to rawName: String, modelContext: ModelContext) {
-        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        list.name = trimmed
-        list.touch()
-        try? modelContext.save()
+    @discardableResult
+    func createProjectTaskListFolder(
+        named rawName: String,
+        in parentFolder: ProjectTaskListFolder? = nil,
+        modelContext: ModelContext
+    ) throws -> ProjectTaskListFolder {
+        try TaskMutationCoordinator.createProjectTaskListFolder(
+            named: rawName,
+            in: parentFolder,
+            modelContext: modelContext
+        )
     }
 
-    func deleteProjectTaskList(_ list: ProjectTaskList, modelContext: ModelContext) {
-        TaskMutationCoordinator.deleteProjectTaskList(list, modelContext: modelContext)
+    func renameProjectTaskList(
+        _ list: ProjectTaskList,
+        to rawName: String,
+        modelContext: ModelContext
+    ) throws {
+        try TaskMutationCoordinator.renameProjectTaskList(list, to: rawName, modelContext: modelContext)
+    }
+
+    func renameProjectTaskListFolder(
+        _ folder: ProjectTaskListFolder,
+        to rawName: String,
+        modelContext: ModelContext
+    ) throws {
+        try TaskMutationCoordinator.renameProjectTaskListFolder(folder, to: rawName, modelContext: modelContext)
+    }
+
+    func moveProjectTaskList(
+        _ list: ProjectTaskList,
+        to parentFolder: ProjectTaskListFolder?,
+        modelContext: ModelContext
+    ) throws {
+        try TaskMutationCoordinator.moveProjectTaskList(list, to: parentFolder, modelContext: modelContext)
+    }
+
+    func moveProjectTaskListFolder(
+        _ folder: ProjectTaskListFolder,
+        to parentFolder: ProjectTaskListFolder?,
+        modelContext: ModelContext
+    ) throws {
+        try TaskMutationCoordinator.moveProjectTaskListFolder(folder, to: parentFolder, modelContext: modelContext)
+    }
+
+    func deleteProjectTaskList(_ list: ProjectTaskList, modelContext: ModelContext) throws {
+        try TaskMutationCoordinator.deleteProjectTaskList(list, modelContext: modelContext)
+    }
+
+    func deleteProjectTaskListFolder(_ folder: ProjectTaskListFolder, modelContext: ModelContext) throws {
+        try TaskMutationCoordinator.deleteProjectTaskListFolder(folder, modelContext: modelContext)
+    }
+
+    func reconcileProjectTaskListSelection(
+        afterDeleting deletedIDs: Set<UUID>,
+        fallback: ProjectTaskList?
+    ) {
+        guard let selectedID = selectedProjectTaskListID, deletedIDs.contains(selectedID) else { return }
+        selectedProjectTaskListID = fallback?.id
+        if selectedSection == .projectLists, fallback == nil {
+            selectedSection = .week
+        }
     }
 
     func openCreateTask(on date: Date? = nil) {
@@ -505,6 +559,145 @@ enum TaskMutationCoordinator {
         await NotificationScheduler.shared.ensureNotificationState(for: task, in: modelContext)
     }
 
+    @discardableResult
+    static func createProjectTaskList(
+        named rawName: String,
+        in parentFolder: ProjectTaskListFolder?,
+        modelContext: ModelContext
+    ) throws -> ProjectTaskList {
+        let name = try normalizedProjectNodeName(rawName)
+        guard try !projectNodeNameExists(name, in: parentFolder, modelContext: modelContext) else {
+            throw ProjectListHierarchyError.duplicateName
+        }
+
+        let list = ProjectTaskList(name: name, parentFolder: parentFolder)
+        modelContext.insert(list)
+        parentFolder?.touch()
+        try saveProjectHierarchy(in: modelContext)
+        return list
+    }
+
+    @discardableResult
+    static func createProjectTaskListFolder(
+        named rawName: String,
+        in parentFolder: ProjectTaskListFolder?,
+        modelContext: ModelContext
+    ) throws -> ProjectTaskListFolder {
+        let name = try normalizedProjectNodeName(rawName)
+        let depth = (parentFolder?.hierarchyDepth ?? 0) + 1
+        guard depth <= ProjectListHierarchyPolicy.maximumFolderDepth else {
+            throw ProjectListHierarchyError.maximumDepthExceeded
+        }
+        guard try !projectNodeNameExists(name, in: parentFolder, modelContext: modelContext) else {
+            throw ProjectListHierarchyError.duplicateName
+        }
+
+        let folder = ProjectTaskListFolder(name: name, parentFolder: parentFolder)
+        modelContext.insert(folder)
+        parentFolder?.touch()
+        try saveProjectHierarchy(in: modelContext)
+        return folder
+    }
+
+    static func renameProjectTaskList(
+        _ list: ProjectTaskList,
+        to rawName: String,
+        modelContext: ModelContext
+    ) throws {
+        let name = try normalizedProjectNodeName(rawName)
+        guard name != list.name else { return }
+        guard try !projectNodeNameExists(
+            name,
+            in: list.parentFolder,
+            excludingListID: list.id,
+            modelContext: modelContext
+        ) else {
+            throw ProjectListHierarchyError.duplicateName
+        }
+
+        list.name = name
+        list.touch()
+        try saveProjectHierarchy(in: modelContext)
+    }
+
+    static func renameProjectTaskListFolder(
+        _ folder: ProjectTaskListFolder,
+        to rawName: String,
+        modelContext: ModelContext
+    ) throws {
+        let name = try normalizedProjectNodeName(rawName)
+        guard name != folder.name else { return }
+        guard try !projectNodeNameExists(
+            name,
+            in: folder.parentFolder,
+            excludingFolderID: folder.id,
+            modelContext: modelContext
+        ) else {
+            throw ProjectListHierarchyError.duplicateName
+        }
+
+        folder.name = name
+        folder.touch()
+        try saveProjectHierarchy(in: modelContext)
+    }
+
+    static func moveProjectTaskList(
+        _ list: ProjectTaskList,
+        to parentFolder: ProjectTaskListFolder?,
+        modelContext: ModelContext
+    ) throws {
+        guard list.parentFolder?.id != parentFolder?.id else { return }
+        guard try !projectNodeNameExists(
+            list.name,
+            in: parentFolder,
+            excludingListID: list.id,
+            modelContext: modelContext
+        ) else {
+            throw ProjectListHierarchyError.duplicateName
+        }
+
+        let previousParent = list.parentFolder
+        list.parentFolder = parentFolder
+        list.touch()
+        previousParent?.touch()
+        parentFolder?.touch()
+        try saveProjectHierarchy(in: modelContext)
+    }
+
+    static func moveProjectTaskListFolder(
+        _ folder: ProjectTaskListFolder,
+        to parentFolder: ProjectTaskListFolder?,
+        modelContext: ModelContext
+    ) throws {
+        if parentFolder?.id == folder.id {
+            throw ProjectListHierarchyError.cannotMoveFolderIntoItself
+        }
+        if let parentFolder, folder.containsDescendant(parentFolder) {
+            throw ProjectListHierarchyError.cannotMoveFolderIntoDescendant
+        }
+        guard folder.parentFolder?.id != parentFolder?.id else { return }
+
+        let destinationDepth = parentFolder?.hierarchyDepth ?? 0
+        guard destinationDepth + folder.subtreeHeight <= ProjectListHierarchyPolicy.maximumFolderDepth else {
+            throw ProjectListHierarchyError.maximumDepthExceeded
+        }
+        guard try !projectNodeNameExists(
+            folder.name,
+            in: parentFolder,
+            excludingFolderID: folder.id,
+            modelContext: modelContext
+        ) else {
+            throw ProjectListHierarchyError.duplicateName
+        }
+
+        let previousParent = folder.parentFolder
+        folder.parentFolder = parentFolder
+        folder.touch()
+        previousParent?.touch()
+        parentFolder?.touch()
+        try saveProjectHierarchy(in: modelContext)
+    }
+
     static func createProjectTask(
         titled rawTitle: String,
         in list: ProjectTaskList,
@@ -556,13 +749,87 @@ enum TaskMutationCoordinator {
         try? modelContext.save()
     }
 
-    static func deleteProjectTaskList(_ list: ProjectTaskList, modelContext: ModelContext) {
-        for task in list.tasks {
+    static func deleteProjectTaskList(_ list: ProjectTaskList, modelContext: ModelContext) throws {
+        for task in Array(list.tasks) {
             NotificationScheduler.shared.removeNotification(for: task)
             modelContext.delete(task)
         }
         modelContext.delete(list)
-        try? modelContext.save()
+        try saveProjectHierarchy(in: modelContext)
+    }
+
+    static func deleteProjectTaskListFolder(
+        _ folder: ProjectTaskListFolder,
+        modelContext: ModelContext
+    ) throws {
+        for list in descendantProjectTaskLists(in: folder) {
+            for task in Array(list.tasks) {
+                NotificationScheduler.shared.removeNotification(for: task)
+            }
+        }
+
+        modelContext.delete(folder)
+        try saveProjectHierarchy(in: modelContext)
+    }
+
+    private static func normalizedProjectNodeName(_ rawName: String) throws -> String {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ProjectListHierarchyError.emptyName }
+        return name
+    }
+
+    private static func projectNodeNameExists(
+        _ name: String,
+        in parentFolder: ProjectTaskListFolder?,
+        excludingListID: UUID? = nil,
+        excludingFolderID: UUID? = nil,
+        modelContext: ModelContext
+    ) throws -> Bool {
+        do {
+            let lists = try modelContext.fetch(FetchDescriptor<ProjectTaskList>())
+            if lists.contains(where: {
+                $0.id != excludingListID
+                    && $0.parentFolder?.id == parentFolder?.id
+                    && $0.name.caseInsensitiveCompare(name) == .orderedSame
+            }) {
+                return true
+            }
+
+            let folders = try modelContext.fetch(FetchDescriptor<ProjectTaskListFolder>())
+            return folders.contains(where: {
+                $0.id != excludingFolderID
+                    && $0.parentFolder?.id == parentFolder?.id
+                    && $0.name.caseInsensitiveCompare(name) == .orderedSame
+            })
+        } catch let error as ProjectListHierarchyError {
+            throw error
+        } catch {
+            throw ProjectListHierarchyError.persistenceFailure(error.localizedDescription)
+        }
+    }
+
+    private static func descendantProjectTaskLists(in folder: ProjectTaskListFolder) -> [ProjectTaskList] {
+        var visited: Set<UUID> = []
+        return descendantProjectTaskLists(in: folder, visited: &visited)
+    }
+
+    private static func descendantProjectTaskLists(
+        in folder: ProjectTaskListFolder,
+        visited: inout Set<UUID>
+    ) -> [ProjectTaskList] {
+        guard visited.insert(folder.id).inserted else { return [] }
+        return folder.lists + folder.childFolders.flatMap {
+            descendantProjectTaskLists(in: $0, visited: &visited)
+        }
+    }
+
+    private static func saveProjectHierarchy(in modelContext: ModelContext) throws {
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw ProjectListHierarchyError.persistenceFailure(error.localizedDescription)
+        }
     }
 
     private static func synchronizeDailyCompletionHabit(for dates: [Date], in modelContext: ModelContext) {

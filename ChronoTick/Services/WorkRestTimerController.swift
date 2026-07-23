@@ -194,7 +194,12 @@ final class WorkRestWidgetAppearancePublisher: ObservableObject {
     init(
         store: WorkRestWidgetStateStore,
         debounceNanoseconds: UInt64 = 250_000_000,
-        renderBackground: @escaping BackgroundRenderer = WorkRestWidgetAppearancePublisher.renderOptimizedBackground,
+        renderBackground: @escaping BackgroundRenderer = { sourceURL, destinationURL in
+            try WorkRestWidgetAppearancePublisher.renderOptimizedBackground(
+                sourceURL: sourceURL,
+                destinationURL: destinationURL
+            )
+        },
         reloadWidget: @escaping () -> Void
     ) {
         self.store = store
